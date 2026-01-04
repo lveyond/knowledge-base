@@ -1,0 +1,29 @@
+# 最小化依赖版本（不包含向量数据库功能）
+# 注意：使用此版本将无法使用向量搜索功能，但基本的文档阅读和问答功能可用
+
+# 基础 Web 框架
+streamlit>=1.28.0
+
+# 文档处理
+python-docx>=1.1.0
+pypdf>=3.17.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+
+# LangChain 相关（用于文本分割，即使没有向量数据库）
+langchain>=0.1.0
+langchain-community>=0.0.20
+langchain-core>=0.1.0
+langchain-text-splitters>=0.2.0
+
+# AI 模型相关
+sentence-transformers>=2.2.0
+requests>=2.31.0
+torch>=2.0.0
+transformers>=4.35.0
+
+# 注意：此版本不包含 chromadb，因此：
+# - 无法使用向量搜索功能
+# - 问答功能仍然可用，但会使用所有文档内容（可能较慢）
+# - 建议安装完整版以获得最佳性能
+

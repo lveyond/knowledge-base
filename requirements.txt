@@ -1,0 +1,25 @@
+# 基础 Web 框架
+streamlit>=1.28.0
+
+# 文档处理
+python-docx>=1.1.0
+pypdf>=3.17.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+
+# LangChain 相关
+langchain>=0.1.0
+langchain-community>=0.0.20
+langchain-core>=0.1.0
+langchain-text-splitters>=0.2.0
+
+# 向量数据库（如果安装失败，请参考 INSTALL.md）
+# 注意：chromadb 依赖 zstandard，可能需要编译工具
+chromadb>=0.4.0
+
+# AI 模型相关
+sentence-transformers>=2.2.0
+requests>=2.31.0
+torch>=2.0.0
+transformers>=4.35.0
+
