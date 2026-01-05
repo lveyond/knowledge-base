@@ -299,3 +299,13 @@ A:
 
 欢迎提交 Issue 和 Pull Request！
 
+---
+
+## ©️ 版权说明
+
+**Copyright © 2026 吕滢**
+
+- **GitHub**: [@lveyond](https://github.com/lveyond)
+- **QQ/WeChat**: 329613507
+
+本项目仅供学习和研究使用。

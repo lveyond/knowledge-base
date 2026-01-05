@@ -294,6 +294,23 @@ def load_existing_vector_store(folder_path: str = None, progress_callback=None):
         # 加载失败，返回 None
         return None
 
+def calculate_content_hash(content: Any) -> str:
+    """计算文档内容的哈希值
+    
+    Args:
+        content: 文档内容（字符串或字典）
+    
+    Returns:
+        内容的 MD5 哈希值
+    """
+    if isinstance(content, dict):
+        # Excel 文件：合并所有工作表内容
+        content_str = "\n".join([f"{k}:{v}" for k, v in content.items()])
+    else:
+        content_str = str(content)
+    
+    return hashlib.md5(content_str.encode('utf-8')).hexdigest()
+
 def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
     """检查文档是否发生变化
     
@@ -325,11 +342,21 @@ def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
         
         for filename, data in docs_dict.items():
             file_path = data.get('path', '')
-            if os.path.exists(file_path):
-                current_signature["files"][filename] = {
-                    "size": data.get('size', 0),
-                    "mtime": os.path.getmtime(file_path) if file_path else 0
-                }
+            content = data.get('content', '')
+            
+            file_info = {
+                "size": data.get('size', 0),
+                "content_hash": calculate_content_hash(content)  # 使用内容哈希
+            }
+            
+            # 如果文件路径存在且是持久路径（非临时路径），也记录修改时间
+            if file_path and os.path.exists(file_path):
+                # 检查是否是临时路径（临时路径通常包含 temp 或 tmp）
+                is_temp_path = 'temp' in file_path.lower() or 'tmp' in file_path.lower()
+                if not is_temp_path:
+                    file_info["mtime"] = os.path.getmtime(file_path)
+            
+            current_signature["files"][filename] = file_info
         
         # 比较签名
         if old_signature.get("folder_path") != current_signature["folder_path"]:
@@ -344,19 +371,48 @@ def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
         if set(old_files.keys()) != set(current_files.keys()):
             return True
         
-        # 检查文件大小和修改时间
+        # 检查文件内容哈希（优先）和文件大小/修改时间
         for filename in old_files.keys():
             if filename not in current_files:
                 return True
+            
             old_info = old_files[filename]
             current_info = current_files[filename]
+            
+            # 优先使用内容哈希进行比较（最可靠的方法）
+            old_hash = old_info.get("content_hash")
+            current_hash = current_info.get("content_hash")
+            
+            # 如果当前有内容哈希，优先使用哈希比较
+            if current_hash:
+                if old_hash:
+                    # 两者都有哈希值，直接比较
+                    if old_hash != current_hash:
+                        return True
+                    # 哈希值相同，认为文档未变化（即使修改时间不同）
+                    continue
+                else:
+                    # 旧签名没有哈希值（可能是旧版本保存的），但当前有
+                    # 这种情况下，我们只比较文件大小，不比较修改时间
+                    # 因为修改时间可能因为各种原因变化（文件被重新保存、系统时间调整等）
+                    # 但文件大小相同通常意味着内容相同（虽然不是100%确定，但概率很高）
+                    if old_info.get("size") != current_info.get("size"):
+                        return True
+                    # 文件大小相同，认为文档未变化（即使修改时间不同）
+                    # 签名文件会在保存时更新，添加内容哈希，下次比较会更准确
+                    continue
+            
+            # 如果当前没有内容哈希（不应该发生，但为了兼容性保留）
+            # 回退到大小和修改时间比较
             if (old_info.get("size") != current_info.get("size") or 
-                abs(old_info.get("mtime", 0) - current_info.get("mtime", 0)) > 1):
+                (old_info.get("mtime") and current_info.get("mtime") and
+                 abs(old_info.get("mtime", 0) - current_info.get("mtime", 0)) > 1)):
                 return True
         
         return False  # 文档未变化
-    except Exception:
-        return True  # 读取签名失败，认为文档已变化
+    except Exception as e:
+        # 读取签名失败，认为文档已变化
+        return True
 
 def save_docs_signature(docs_dict: Dict[str, Any], folder_path: str):
     """保存文档签名
@@ -379,11 +435,21 @@ def save_docs_signature(docs_dict: Dict[str, Any], folder_path: str):
         
         for filename, data in docs_dict.items():
             file_path = data.get('path', '')
-            if os.path.exists(file_path):
-                signature["files"][filename] = {
-                    "size": data.get('size', 0),
-                    "mtime": os.path.getmtime(file_path) if file_path else 0
-                }
+            content = data.get('content', '')
+            
+            file_info = {
+                "size": data.get('size', 0),
+                "content_hash": calculate_content_hash(content)  # 保存内容哈希
+            }
+            
+            # 如果文件路径存在且是持久路径（非临时路径），也记录修改时间
+            if file_path and os.path.exists(file_path):
+                # 检查是否是临时路径
+                is_temp_path = 'temp' in file_path.lower() or 'tmp' in file_path.lower()
+                if not is_temp_path:
+                    file_info["mtime"] = os.path.getmtime(file_path)
+            
+            signature["files"][filename] = file_info
         
         with open(signature_file, 'w', encoding='utf-8') as f:
             json.dump(signature, f, indent=2, ensure_ascii=False)
@@ -709,6 +775,23 @@ def generate_summary_deepseek(docs_dict: Dict[str, Any], api_key: str, specific_
 
     return query_deepseek(prompt, api_key, max_tokens=3000)
 
+# 显示版权信息
+def show_footer():
+    """在页面底部显示版权信息"""
+    st.markdown("---")
+    st.markdown(
+        """
+        <div style='text-align: center; color: #666; padding: 20px 0;'>
+            <p style='margin: 5px 0;'><strong>Copyright © 2026 吕滢</strong></p>
+            <p style='margin: 5px 0;'>
+                GitHub: <a href='https://github.com/lveyond' target='_blank' style='color: #1f77b4;'>@lveyond</a> | 
+                QQ/WeChat: 329613507
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
 # Streamlit界面
 def main():
     st.set_page_config(
@@ -998,33 +1081,71 @@ def main():
             
             st.success(f"已上传 {len(uploaded_files)} 个文件")
             
-            # 重新创建向量数据库
+            # 检查并加载/创建向量数据库（上传文件时 folder_path 为 None）
             if st.session_state.docs:
                 st.session_state.is_creating_vectorstore = True
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
                 try:
-                    status_text.text("🔄 步骤 1/4: 准备文本内容...")
-                    progress_bar.progress(10)
+                    # 首先尝试加载已有向量数据库
+                    status_text.text("🔄 正在检查已有向量数据库...")
+                    progress_bar.progress(5)
                     
-                    status_text.text("🔄 步骤 2/4: 分割文本...")
-                    progress_bar.progress(30)
-                    
-                    status_text.text("🔄 步骤 3/4: 生成向量嵌入（这可能需要几分钟）...")
-                    progress_bar.progress(50)
-                    
-                    st.session_state.vectorstore = create_local_vector_store(
-                        st.session_state.docs,
+                    existing_vectorstore = load_existing_vector_store(
                         folder_path=None,  # 上传文件时没有文件夹路径
                         progress_callback=lambda p, msg: (
-                            progress_bar.progress(p / 100),
+                            progress_bar.progress(p / 100.0),
                             status_text.text(msg)
                         )
                     )
                     
-                    progress_bar.progress(90)
-                    status_text.text("🔄 步骤 4/4: 保存向量数据库...")
+                    # 检查文档是否变化
+                    docs_changed = check_docs_changed(st.session_state.docs, None)
+                    
+                    # 安全地检查向量数据库是否可用
+                    vectorstore_usable = False
+                    if existing_vectorstore:
+                        try:
+                            _ = len(existing_vectorstore)
+                            vectorstore_usable = True
+                        except Exception as e:
+                            vectorstore_usable = False
+                            status_text.text("⚠️ 检测到向量数据库索引损坏，将重新创建...")
+                            progress_bar.progress(0.1)
+                    
+                    if vectorstore_usable and not docs_changed:
+                        # 文档未变化，使用已有向量数据库
+                        st.session_state.vectorstore = existing_vectorstore
+                        progress_bar.progress(100)
+                        status_text.text("✅ 已加载已有向量数据库！")
+                        st.success("✅ 已加载已有向量数据库（文档未变化）")
+                    else:
+                        # 文档变化或不存在，需要重新创建
+                        if existing_vectorstore and docs_changed:
+                            status_text.text("📝 检测到文档变化，正在重新创建向量数据库...")
+                            progress_bar.progress(10)
+                        
+                        status_text.text("🔄 步骤 1/4: 准备文本内容...")
+                        progress_bar.progress(10)
+                        
+                        status_text.text("🔄 步骤 2/4: 分割文本...")
+                        progress_bar.progress(30)
+                        
+                        status_text.text("🔄 步骤 3/4: 生成向量嵌入（这可能需要几分钟）...")
+                        progress_bar.progress(50)
+                        
+                        st.session_state.vectorstore = create_local_vector_store(
+                            st.session_state.docs,
+                            folder_path=None,  # 上传文件时没有文件夹路径
+                            progress_callback=lambda p, msg: (
+                                progress_bar.progress(p / 100.0),
+                                status_text.text(msg)
+                            )
+                        )
+                        
+                        progress_bar.progress(90)
+                        status_text.text("🔄 步骤 4/4: 保存向量数据库...")
                     
                     if st.session_state.vectorstore:
                         progress_bar.progress(100)
@@ -1181,7 +1302,7 @@ def main():
         # 批量操作
         if st.session_state.docs:
             st.markdown("---")
-            st.subheader("📈 批量处理")
+            st.subheader("📈 批量总结")
             
             # 文档选择选项
             summary_mode = st.radio(
@@ -1519,6 +1640,9 @@ def main():
                     analysis = query_deepseek(prompt, api_key)
                     st.markdown("### 📊 数据分析结果")
                     st.write(analysis)
+        
+        # 显示版权信息
+        show_footer()
 
 # 简易版（无向量数据库）
 def simple_main():
@@ -1622,6 +1746,9 @@ def simple_main():
             with st.spinner("正在思考..."):
                 answer = query_deepseek(prompt, api_key)
                 st.write("**答案：**", answer)
+        
+        # 显示版权信息
+        show_footer()
 
 if __name__ == "__main__":
     # 默认使用完整版，可以通过环境变量或命令行参数切换
