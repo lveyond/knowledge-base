@@ -32,8 +32,44 @@ if errorlevel 1 (
 )
 echo.
 
-echo [步骤 4/5] 尝试安装 ChromaDB（可能需要编译）...
-echo 如果这一步失败，请参考 docs\INSTALL.md 中的解决方案
+echo [步骤 4/5] 安装 zstandard 和 ChromaDB...
+echo.
+echo 正在尝试安装 zstandard（优先使用预编译包）...
+pip install zstandard --only-binary :all: --prefer-binary
+if errorlevel 1 (
+    echo.
+    echo 预编译包安装失败，尝试从源码安装...
+    echo 注意：这可能需要 Microsoft Visual C++ 14.0 或更高版本
+    pip install zstandard
+    if errorlevel 1 (
+        echo.
+        echo ========================================
+        echo zstandard 安装失败！
+        echo ========================================
+        echo.
+        echo 可能的原因：
+        echo 1. 缺少 Microsoft Visual C++ 14.0 或更高版本
+        echo 2. Python 版本太新（当前版本可能没有预编译包）
+        echo.
+        echo 解决方案：
+        echo 1. 安装 Microsoft C++ Build Tools:
+        echo    https://visualstudio.microsoft.com/visual-cpp-build-tools/
+        echo    下载后安装 "C++ build tools" 工作负载
+        echo.
+        echo 2. 或者尝试使用 conda 安装:
+        echo    conda install -c conda-forge zstandard chromadb
+        echo.
+        echo 3. 或者使用最小化版本（无向量数据库功能）:
+        echo    pip install -r requirements-minimal.txt
+        echo.
+        echo 4. 查看 docs\INSTALL.md 获取更多解决方案
+        echo.
+        pause
+        exit /b 1
+    )
+)
+echo.
+echo 正在安装 ChromaDB...
 pip install chromadb
 if errorlevel 1 (
     echo.
@@ -42,18 +78,16 @@ if errorlevel 1 (
     echo ========================================
     echo.
     echo 可能的原因：
-    echo 1. 缺少 Microsoft Visual C++ 14.0 或更高版本
-    echo 2. Python 版本太新（建议使用 Python 3.11 或 3.12）
+    echo 1. zstandard 未正确安装
+    echo 2. 缺少其他编译依赖
     echo.
     echo 解决方案：
-    echo 1. 安装 Microsoft C++ Build Tools:
+    echo 1. 确保 zstandard 已正确安装
+    echo 2. 安装 Microsoft C++ Build Tools:
     echo    https://visualstudio.microsoft.com/visual-cpp-build-tools/
     echo.
-    echo 2. 或者尝试使用预编译包:
-    echo    pip install zstandard --only-binary :all:
-    echo    pip install chromadb
-    echo.
-    echo 3. 查看 docs\INSTALL.md 获取更多解决方案
+    echo 3. 或者使用最小化版本（无向量数据库功能）:
+    echo    pip install -r requirements-minimal.txt
     echo.
     pause
     exit /b 1

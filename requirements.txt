@@ -12,6 +12,8 @@ langchain>=0.1.0
 langchain-community>=0.0.20
 langchain-core>=0.1.0
 langchain-text-splitters>=0.2.0
+# 确保使用支持新版本 zstandard 的 langsmith（避免编译错误）
+langsmith>=0.6.0
 
 # 向量数据库（如果安装失败，请参考 INSTALL.md）
 # 注意：chromadb 依赖 zstandard，可能需要编译工具

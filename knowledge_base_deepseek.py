@@ -147,6 +147,61 @@ def process_folder(folder_path: str) -> Dict[str, Any]:
     return all_docs
 
 # 本地向量数据库模块（不需要API密钥）
+def get_model_path(model_name: str = "BAAI/bge-small-zh-v1.5") -> str:
+    """获取模型路径，优先使用本地路径
+    
+    Args:
+        model_name: HuggingFace 模型名称或本地路径
+    
+    Returns:
+        模型路径（本地路径如果存在，否则返回模型名称）
+    """
+    import os
+    
+    try:
+        # 如果已经是本地路径且存在，直接返回
+        if os.path.exists(model_name) and os.path.isdir(model_name):
+            return model_name
+        
+        # 检查 HuggingFace 缓存目录
+        cache_dir = os.path.join(
+            os.path.expanduser("~"),
+            ".cache",
+            "huggingface",
+            "hub"
+        )
+        
+        # 将模型名称转换为缓存目录格式（BAAI/bge-small-zh-v1.5 -> models--BAAI--bge-small-zh-v1.5）
+        cache_model_name = f"models--{model_name.replace('/', '--')}"
+        cache_path = os.path.join(cache_dir, cache_model_name)
+        
+        # 查找 snapshots 目录下的最新版本
+        if os.path.exists(cache_path):
+            snapshots_dir = os.path.join(cache_path, "snapshots")
+            if os.path.exists(snapshots_dir):
+                try:
+                    # 获取所有快照版本
+                    snapshots = [d for d in os.listdir(snapshots_dir) 
+                                if os.path.isdir(os.path.join(snapshots_dir, d))]
+                    if snapshots:
+                        # 使用最新的快照
+                        latest_snapshot = sorted(snapshots)[-1]
+                        local_path = os.path.join(snapshots_dir, latest_snapshot)
+                        if os.path.exists(local_path):
+                            return local_path
+                except (OSError, PermissionError):
+                    pass  # 忽略访问错误，继续检查其他路径
+        
+        # 检查项目目录下的 models 文件夹
+        project_model_path = os.path.join(".", "models", model_name.replace("/", "--"))
+        if os.path.exists(project_model_path):
+            return project_model_path
+    except Exception:
+        pass  # 如果出现任何错误，返回原始模型名称
+    
+    # 如果都不存在，返回原始模型名称（会触发下载）
+    return model_name
+
 def get_vector_db_path(folder_path: str) -> str:
     """根据文件夹路径生成唯一的向量数据库目录路径
     
@@ -185,8 +240,16 @@ def load_existing_vector_store(folder_path: str = None, progress_callback=None):
         向量数据库对象，如果不存在或加载失败则返回 None
     """
     try:
-        from langchain_community.embeddings import HuggingFaceEmbeddings
-        from langchain_community.vectorstores import Chroma
+        # 优先使用新版本的包
+        try:
+            from langchain_huggingface import HuggingFaceEmbeddings
+        except ImportError:
+            from langchain_community.embeddings import HuggingFaceEmbeddings
+        
+        try:
+            from langchain_chroma import Chroma
+        except ImportError:
+            from langchain_community.vectorstores import Chroma
         
         db_path = get_vector_db_path(folder_path) if folder_path else "./chroma_db"
         
@@ -197,8 +260,10 @@ def load_existing_vector_store(folder_path: str = None, progress_callback=None):
             progress_callback(10, "🔄 正在加载已有向量数据库...")
         
         # 初始化嵌入模型（必须与创建时使用相同的模型）
+        # 优先使用本地模型路径，避免网络下载
+        model_path = get_model_path("BAAI/bge-small-zh-v1.5")
         embeddings = HuggingFaceEmbeddings(
-            model_name="BAAI/bge-small-zh-v1.5",
+            model_name=model_path,
             model_kwargs={'device': 'cpu'},
             encode_kwargs={'normalize_embeddings': True}
         )
@@ -211,6 +276,15 @@ def load_existing_vector_store(folder_path: str = None, progress_callback=None):
             persist_directory=db_path,
             embedding_function=embeddings
         )
+        
+        # 验证向量数据库是否可用（尝试获取数量，如果索引损坏会在这里失败）
+        try:
+            _ = len(vectorstore)  # 这会触发 count() 调用，如果索引损坏会抛出异常
+        except Exception as verify_error:
+            # 索引文件可能损坏，返回 None 以便重新创建
+            if progress_callback:
+                progress_callback(100, "⚠️ 向量数据库索引可能损坏，将重新创建...")
+            return None
         
         if progress_callback:
             progress_callback(100, "✅ 向量数据库加载完成！")
@@ -334,8 +408,16 @@ def create_local_vector_store(docs_dict: Dict[str, Any], progress_callback=None,
             except ImportError:
                 from langchain_core.text_splitter import RecursiveCharacterTextSplitter
         
-        from langchain_community.embeddings import HuggingFaceEmbeddings
-        from langchain_community.vectorstores import Chroma
+        # 优先使用新版本的包
+        try:
+            from langchain_huggingface import HuggingFaceEmbeddings
+        except ImportError:
+            from langchain_community.embeddings import HuggingFaceEmbeddings
+        
+        try:
+            from langchain_chroma import Chroma
+        except ImportError:
+            from langchain_community.vectorstores import Chroma
         try:
             from langchain.schema import Document as LangDocument
         except ImportError:
@@ -387,8 +469,10 @@ def create_local_vector_store(docs_dict: Dict[str, Any], progress_callback=None,
         if progress_callback:
             progress_callback(55, "🔄 步骤 3/4: 初始化嵌入模型（首次运行会下载模型，可能需要几分钟）...")
         
+        # 优先使用本地模型路径，避免网络下载
+        model_path = get_model_path("BAAI/bge-small-zh-v1.5")
         embeddings = HuggingFaceEmbeddings(
-            model_name="BAAI/bge-small-zh-v1.5",  # 中文优化的小模型
+            model_name=model_path,  # 中文优化的小模型
             model_kwargs={'device': 'cpu'},
             encode_kwargs={'normalize_embeddings': True}
         )
@@ -404,11 +488,21 @@ def create_local_vector_store(docs_dict: Dict[str, Any], progress_callback=None,
         db_path = get_vector_db_path(folder_path) if folder_path else "./chroma_db"
         os.makedirs(db_path, exist_ok=True)
         
-        vectorstore = Chroma.from_documents(
-            documents=documents,
-            embedding=embeddings,
-            persist_directory=db_path
-        )
+        # 兼容不同版本的参数名
+        try:
+            # 新版本使用 embedding_function
+            vectorstore = Chroma.from_documents(
+                documents=documents,
+                embedding_function=embeddings,
+                persist_directory=db_path
+            )
+        except TypeError:
+            # 旧版本使用 embedding
+            vectorstore = Chroma.from_documents(
+                documents=documents,
+                embedding=embeddings,
+                persist_directory=db_path
+            )
         
         if progress_callback:
             progress_callback(100, "✅ 向量数据库创建完成！")
@@ -790,7 +884,20 @@ def main():
                             # 检查文档是否变化
                             docs_changed = check_docs_changed(st.session_state.docs, folder_path)
                             
-                            if existing_vectorstore and not docs_changed:
+                            # 安全地检查向量数据库是否可用（避免索引损坏导致的错误）
+                            vectorstore_usable = False
+                            if existing_vectorstore:
+                                try:
+                                    # 尝试访问向量数据库，如果索引损坏会在这里失败
+                                    _ = len(existing_vectorstore)
+                                    vectorstore_usable = True
+                                except Exception as e:
+                                    # 向量数据库索引可能损坏，需要重新创建
+                                    vectorstore_usable = False
+                                    status_text.text("⚠️ 检测到向量数据库索引损坏，将重新创建...")
+                                    progress_bar.progress(0.1)
+                            
+                            if vectorstore_usable and not docs_changed:
                                 # 文档未变化，使用已有向量数据库
                                 st.session_state.vectorstore = existing_vectorstore
                                 progress_bar.progress(100)
@@ -1295,6 +1402,9 @@ def main():
         
         # 处理搜索答案的逻辑（移到列布局外，使内容占据全宽）
         if search_clicked:
+            # 清除高级功能显示状态
+            st.session_state.show_data_analysis = False
+            
             if not question:
                 st.warning("请输入问题")
             elif not api_key:
@@ -1374,46 +1484,29 @@ def main():
                                 st.markdown(f"**来源 {i} - {source}**")
                                 st.caption(content[:300] + "...")
         
-        # 高级功能
+        # 高级功能（在col2内，确保布局正确）
         st.markdown("---")
         st.subheader("🎯 高级功能")
         
-        col_x, col_y = st.columns(2)
+        # 数据分析按钮（语义搜索功能已移除，因为与"查看参考来源"功能重复）
+        data_analysis_clicked = st.button("📊 数据分析", use_container_width=True, key="data_analysis_btn")
         
-        with col_x:
-            semantic_search_clicked = st.button("🔍 语义搜索", use_container_width=True)
+        # 初始化session_state
+        if 'show_data_analysis' not in st.session_state:
+            st.session_state.show_data_analysis = False
         
-        with col_y:
-            data_analysis_clicked = st.button("📊 数据分析", use_container_width=True)
-        
-        # 处理语义搜索（移到列布局外，使内容占据全宽）
-        if semantic_search_clicked:
-            if not question:
-                st.warning("请输入问题")
-            elif not st.session_state.vectorstore:
-                st.warning("向量数据库未创建，请先加载文档")
-            else:
-                similar_docs = search_similar_documents(
-                    st.session_state.vectorstore, 
-                    question
-                )
-                if similar_docs:
-                    st.info("📚 相关文档片段:")
-                    for i, (content, source) in enumerate(similar_docs[:3], 1):
-                        st.markdown(f"**{i}. {source}**")
-                        st.caption(content[:200] + "...")
-                else:
-                    st.info("没有找到相关文档")
-        
-        # 处理数据分析（移到列布局外，使内容占据全宽）
         if data_analysis_clicked:
+            st.session_state.show_data_analysis = True
+        
+        # 处理数据分析（在col2内，使用容器组织结果）
+        if st.session_state.show_data_analysis:
             if not st.session_state.docs:
                 st.warning("请先加载文档")
             elif not api_key:
                 st.error("请输入DeepSeek API密钥")
             else:
                 with st.spinner("正在分析文档..."):
-                    prompt = f"""请分析以下文档集合，提供数据分析：
+                    prompt = f"""请分析以下文档集合，提供数据分析:
 
 文档信息：
 {chr(10).join([f'{name}: {len(str(data["content"]))} 字符' for name, data in st.session_state.docs.items()])}

@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+venv/
+env/
+ENV/
+.venv/
+
+# Poetry
+poetry.lock
+# 注意：poetry.lock 通常应该提交，但如果团队不使用 Poetry 可以不提交
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Streamlit
+.streamlit/
+
+# ChromaDB
+chroma_db/
+*.db
+*.sqlite
+
+# HuggingFace 模型文件（手动下载的模型）
+models/
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.onnx
+*.h5
+*.ckpt
+
+# HuggingFace 缓存（可选，通常不需要提交）
+# .cache/huggingface/
+
+# API 密钥配置文件
+.deepseek_config.json
+*.config.json
+
+# 环境变量
+.env
+.env.local
+
+# 操作系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 日志
+*.log
+
+# 临时文件
+*.tmp
+*.temp
+

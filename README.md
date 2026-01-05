@@ -15,7 +15,26 @@
 
 ### 1. 安装依赖
 
-**推荐方式（使用安装脚本）：**
+**⭐ 推荐方式（使用 Poetry - Python 3.11 环境）：**
+
+```bash
+# 1. 配置 Poetry 使用 Python 3.11
+poetry env use py -3.11
+
+# 2. 安装所有依赖
+poetry install
+
+# 3. 激活环境并运行
+poetry shell
+streamlit run knowledge_base_deepseek.py
+
+# 或者直接运行（无需激活）
+poetry run streamlit run knowledge_base_deepseek.py
+```
+
+📖 **详细 Poetry 使用说明**：请查看 [docs/POETRY_SETUP.md](docs/POETRY_SETUP.md)
+
+**方式二（使用安装脚本）：**
 
 ```bash
 # Windows
@@ -26,7 +45,7 @@ chmod +x scripts/install_dependencies.sh
 ./scripts/install_dependencies.sh
 ```
 
-**手动安装：**
+**方式三（手动安装）：**
 
 ```bash
 # 首先更新 pip 和构建工具
@@ -113,11 +132,13 @@ chmod +x scripts/run.sh
 ```
 knowledge-base/
 ├── knowledge_base_deepseek.py  # 主程序文件
+├── download_model.py            # 模型下载脚本
 ├── requirements.txt            # 依赖包列表
 ├── requirements-minimal.txt    # 最小化依赖列表
 ├── README.md                   # 项目说明
 ├── docs/                       # 文档目录
 │   ├── INSTALL.md             # 安装指南
+│   ├── MODEL_DOWNLOAD_GUIDE.md # 模型下载指南
 │   ├── API_KEY_STORAGE.md     # API密钥保存说明
 │   ├── API_TIMEOUT_FIX.md     # API超时问题解决
 │   └── SAVE_FEATURES.md       # 保存功能说明
@@ -126,6 +147,8 @@ knowledge-base/
 │   ├── install_dependencies.sh   # Linux/Mac安装脚本
 │   ├── run.bat                  # Windows启动脚本
 │   └── run.sh                   # Linux/Mac启动脚本
+├── models/                     # 本地模型存储目录（可选）
+│   └── BAAI--bge-small-zh-v1.5/  # 手动下载的模型文件
 └── chroma_db/                  # 向量数据库存储目录（自动生成）
 ```
 
@@ -142,6 +165,70 @@ knowledge-base/
 - 向量数据库存储在 `./chroma_db` 目录
 - 首次加载文档时会自动创建向量数据库
 
+### 📥 手动下载 HuggingFace 模型（网络不稳定时）
+
+当网络连接不稳定或无法访问 HuggingFace 时，可以手动下载模型文件。
+
+**模型信息：**
+- 模型名称：`BAAI/bge-small-zh-v1.5`
+- 模型大小：约 130 MB
+- 用途：中文文本嵌入（向量化）
+
+**方法一：使用下载脚本（推荐）**
+
+```bash
+python download_model.py
+```
+
+脚本会引导你选择下载方式和位置，支持：
+- 使用国内镜像（HF-Mirror）
+- 断点续传
+- 选择下载位置（项目目录或 HuggingFace 缓存目录）
+
+**方法二：使用命令行工具**
+
+```bash
+# 1. 安装依赖
+pip install huggingface-hub
+
+# 2. 设置镜像（可选，国内用户推荐）
+set HF_ENDPOINT=https://hf-mirror.com  # Windows
+# export HF_ENDPOINT=https://hf-mirror.com  # Linux/Mac
+
+# 3. 下载模型到项目目录
+huggingface-cli download BAAI/bge-small-zh-v1.5 --local-dir ./models/BAAI--bge-small-zh-v1.5
+
+# 或下载到 HuggingFace 默认缓存目录
+huggingface-cli download BAAI/bge-small-zh-v1.5
+```
+
+**方法三：使用 Python 代码**
+
+```python
+from huggingface_hub import snapshot_download
+import os
+
+# 使用镜像（可选，国内用户推荐）
+os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+
+# 下载到项目目录
+snapshot_download(
+    repo_id="BAAI/bge-small-zh-v1.5",
+    local_dir="./models/BAAI--bge-small-zh-v1.5",
+    local_dir_use_symlinks=False,
+    resume_download=True  # 支持断点续传
+)
+```
+
+**支持的模型路径：**
+
+程序会自动检测以下位置的模型：
+1. **项目目录**：`./models/BAAI--bge-small-zh-v1.5/`
+2. **HuggingFace 缓存**：`~/.cache/huggingface/hub/models--BAAI--bge-small-zh-v1.5/`
+3. 如果都不存在，会自动从 HuggingFace 下载
+
+**详细说明：** 请查看 [docs/MODEL_DOWNLOAD_GUIDE.md](docs/MODEL_DOWNLOAD_GUIDE.md)
+
 ## 🔧 常见问题
 
 ### Q: 安装依赖时出现 zstandard/chromadb 编译错误？
@@ -156,8 +243,29 @@ A: 这是因为 `chromadb` 依赖 `zstandard`，需要编译工具。解决方�
 
 A: 
 - 确保已安装所有依赖包，特别是 `sentence-transformers` 和 `chromadb`
-- 首次运行时会自动下载嵌入模型（约几百MB），需要一定时间和网络连接
+- 首次运行时会自动下载嵌入模型（约 130MB），需要一定时间和网络连接
 - 如果 `chromadb` 未安装，程序仍可运行，但会使用所有文档内容进行问答（可能较慢）
+
+### Q: 下载模型时网络连接失败或超时？
+
+A: 如果遇到网络问题，可以手动下载模型：
+
+1. **使用下载脚本**（最简单）：
+   ```bash
+   python download_model.py
+   ```
+
+2. **使用国内镜像**：
+   ```bash
+   set HF_ENDPOINT=https://hf-mirror.com  # Windows
+   huggingface-cli download BAAI/bge-small-zh-v1.5
+   ```
+
+3. **手动下载后放置到项目目录**：
+   - 下载模型到 `./models/BAAI--bge-small-zh-v1.5/` 目录
+   - 程序会自动检测并使用本地模型
+
+详细说明请查看 [docs/MODEL_DOWNLOAD_GUIDE.md](docs/MODEL_DOWNLOAD_GUIDE.md)
 
 ### Q: PDF 文件读取失败？
 
@@ -178,7 +286,9 @@ A:
 
 - DeepSeek API 需要有效的 API 密钥才能使用问答功能
 - 向量数据库功能不需要 API 密钥，可以独立使用
-- 首次运行时会下载嵌入模型（约几百MB），请确保网络连接正常
+- 首次运行时会自动下载嵌入模型（约 130MB），请确保网络连接正常
+- 如果网络不稳定，可以使用 `download_model.py` 脚本手动下载模型
+- 程序会自动检测本地模型，优先使用本地文件，避免重复下载
 - 大量文档处理可能需要较长时间，请耐心等待
 
 ## 📄 许可证

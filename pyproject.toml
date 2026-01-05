@@ -1,0 +1,42 @@
+[tool.poetry]
+name = "knowledge-base"
+version = "1.0.0"
+description = "智能知识库系统 (DeepSeek版) - 基于 Streamlit 和 DeepSeek API 的智能知识库系统"
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+packages = [{include = "knowledge_base_deepseek.py"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+# 基础 Web 框架
+streamlit = ">=1.28.0"
+# 文档处理
+python-docx = ">=1.1.0"
+pypdf = ">=3.17.0"
+pandas = ">=2.0.0"
+openpyxl = ">=3.1.0"
+# LangChain 相关
+langchain = ">=0.1.0"
+langchain-community = ">=0.0.20"
+langchain-core = ">=0.1.0"
+langchain-text-splitters = ">=0.2.0"
+langchain-huggingface = ">=0.0.1"
+langchain-chroma = ">=0.1.0"
+# 确保使用支持新版本 zstandard 的 langsmith（避免编译错误）
+langsmith = ">=0.6.0"
+# 向量数据库
+chromadb = ">=0.4.0"
+# AI 模型相关
+sentence-transformers = ">=2.2.0"
+requests = ">=2.31.0"
+torch = ">=2.0.0"
+transformers = ">=4.35.0"
+pypika = "^0.48.9"
+onnxruntime = "^1.23.2"
+
+[tool.poetry.group.dev.dependencies]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
