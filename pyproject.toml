@@ -16,16 +16,20 @@ pypdf = ">=3.17.0"
 pandas = ">=2.0.0"
 openpyxl = ">=3.1.0"
 # LangChain 相关
+# 注意：langchain-community 0.3.23+ 要求 NumPy 2.1.0+，与 ChromaDB 冲突
+# 必须使用 0.3.22 或更早版本以兼容 NumPy 1.x
 langchain = ">=0.1.0"
-langchain-community = ">=0.0.20"
 langchain-core = ">=0.1.0"
 langchain-text-splitters = ">=0.2.0"
 langchain-huggingface = ">=0.0.1"
 langchain-chroma = ">=0.1.0"
-# 确保使用支持新版本 zstandard 的 langsmith（避免编译错误）
-langsmith = ">=0.6.0"
-# 向量数据库
-chromadb = ">=0.4.0"
+# langsmith 版本限制（langchain-community 0.3.22 要求 < 0.4）
+# 注意：如果使用 langchain-community < 0.3.23，langsmith 必须 < 0.4
+langsmith = ">=0.1.125,<0.4"
+# 向量数据库（固定版本以避免 HNSW 索引错误和 schema 兼容性问题）
+# 注意：0.4.24 可能存在 schema 兼容性问题，使用 0.4.22 或 0.4.23
+chromadb = ">=0.4.22,<0.4.24"
+# NumPy 版本限制（ChromaDB 不兼容 NumPy 2.0，langchain-community < 0.3.23 也兼容 NumPy 1.x）
 # AI 模型相关
 sentence-transformers = ">=2.2.0"
 requests = ">=2.31.0"
@@ -33,8 +37,8 @@ torch = ">=2.0.0"
 transformers = ">=4.35.0"
 pypika = "^0.48.9"
 onnxruntime = "^1.23.2"
-
-[tool.poetry.group.dev.dependencies]
+numpy = ">=1.24.0,<2.0.0"
+langchain-community = "0.3.20"
 
 [build-system]
 requires = ["poetry-core"]

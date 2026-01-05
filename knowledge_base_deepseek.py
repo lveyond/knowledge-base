@@ -202,6 +202,156 @@ def get_model_path(model_name: str = "BAAI/bge-small-zh-v1.5") -> str:
     # 如果都不存在，返回原始模型名称（会触发下载）
     return model_name
 
+def check_db_corrupted(db_path: str) -> bool:
+    """检测向量数据库是否损坏（特别是 schema 兼容性问题）
+    
+    Args:
+        db_path: 向量数据库路径
+    
+    Returns:
+        True 如果数据库损坏，False 如果正常或不存在
+    """
+    if not os.path.exists(db_path):
+        return False
+    
+    try:
+        # 尝试加载数据库来检测是否损坏
+        try:
+            from langchain_huggingface import HuggingFaceEmbeddings
+        except ImportError:
+            from langchain_community.embeddings import HuggingFaceEmbeddings
+        
+        try:
+            from langchain_chroma import Chroma
+        except ImportError:
+            from langchain_community.vectorstores import Chroma
+        
+        # 初始化嵌入模型
+        model_path = get_model_path("BAAI/bge-small-zh-v1.5")
+        embeddings = HuggingFaceEmbeddings(
+            model_name=model_path,
+            model_kwargs={'device': 'cpu'},
+            encode_kwargs={'normalize_embeddings': True}
+        )
+        
+        # 尝试加载向量数据库
+        vectorstore = Chroma(
+            persist_directory=db_path,
+            embedding_function=embeddings
+        )
+        
+        # 尝试访问数据库（如果 schema 错误会在这里失败）
+        _ = len(vectorstore)
+        return False  # 数据库正常
+    except Exception as e:
+        error_msg = str(e).lower()
+        # 检测常见的数据库错误
+        is_corrupted = (
+            "no such column" in error_msg or
+            "collections.topic" in error_msg or
+            "hnsw" in error_msg or
+            "index" in error_msg or
+            "compaction" in error_msg or
+            "segment" in error_msg or
+            "schema" in error_msg or
+            "sqlite" in error_msg
+        )
+        if is_corrupted:
+            print(f"⚠️ 检测到数据库损坏: {str(e)}")
+        return is_corrupted
+
+def cleanup_corrupted_db(db_path: str, force: bool = True):
+    """彻底清理损坏的向量数据库目录
+    
+    Args:
+        db_path: 向量数据库路径
+        force: 是否强制清理（包括多次尝试和延迟）
+    
+    Returns:
+        bool: 是否成功清理
+    """
+    import shutil
+    import time
+    
+    if not os.path.exists(db_path):
+        return True
+    
+    if force:
+        # 强制清理模式：多次尝试，确保彻底删除
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            try:
+                # 先尝试正常删除
+                if os.path.exists(db_path):
+                    shutil.rmtree(db_path, ignore_errors=False)
+                
+                # 等待一下，确保文件系统更新
+                time.sleep(0.5)
+                
+                # 验证是否删除成功
+                if not os.path.exists(db_path):
+                    print(f"✅ 已彻底清理损坏的向量数据库目录: {db_path}")
+                    return True
+                    
+            except PermissionError as pe:
+                # Windows 上可能有文件被锁定，等待后重试
+                if attempt < max_attempts - 1:
+                    print(f"⚠️ 文件被锁定，等待后重试 ({attempt + 1}/{max_attempts})...")
+                    time.sleep(1)
+                    continue
+                else:
+                    print(f"❌ 清理失败（文件被锁定）: {str(pe)}")
+                    print(f"   请手动删除目录: {db_path}")
+                    return False
+            except Exception as e:
+                if attempt < max_attempts - 1:
+                    print(f"⚠️ 清理失败，重试 ({attempt + 1}/{max_attempts}): {str(e)}")
+                    time.sleep(0.5)
+                    continue
+                else:
+                    print(f"❌ 清理失败: {str(e)}")
+                    print(f"   请手动删除目录: {db_path}")
+                    return False
+        
+        # 如果多次尝试后仍然存在，尝试使用 ignore_errors
+        if os.path.exists(db_path):
+            try:
+                shutil.rmtree(db_path, ignore_errors=True)
+                time.sleep(0.5)
+                if not os.path.exists(db_path):
+                    print(f"✅ 已强制清理数据库目录: {db_path}")
+                    return True
+            except Exception:
+                pass
+        
+        # 最后尝试：重命名目录（如果无法删除）
+        if os.path.exists(db_path):
+            try:
+                import tempfile
+                temp_name = db_path + "_deleted_" + str(int(time.time()))
+                os.rename(db_path, temp_name)
+                print(f"⚠️ 无法删除目录，已重命名为: {temp_name}")
+                print(f"   请稍后手动删除")
+                return True
+            except Exception as e:
+                print(f"❌ 无法清理目录: {str(e)}")
+                print(f"   请手动删除: {db_path}")
+                return False
+        
+        return False
+    else:
+        # 简单清理模式
+        try:
+            if os.path.exists(db_path):
+                shutil.rmtree(db_path)
+                print(f"✅ 已清理数据库目录: {db_path}")
+                return True
+        except Exception as e:
+            print(f"⚠️ 清理失败: {str(e)}")
+            return False
+    
+    return False
+
 def get_vector_db_path(folder_path: str) -> str:
     """根据文件夹路径生成唯一的向量数据库目录路径
     
@@ -281,9 +431,24 @@ def load_existing_vector_store(folder_path: str = None, progress_callback=None):
         try:
             _ = len(vectorstore)  # 这会触发 count() 调用，如果索引损坏会抛出异常
         except Exception as verify_error:
-            # 索引文件可能损坏，返回 None 以便重新创建
-            if progress_callback:
-                progress_callback(100, "⚠️ 向量数据库索引可能损坏，将重新创建...")
+            # 索引文件可能损坏，检测是否是 schema 错误
+            error_msg = str(verify_error).lower()
+            is_schema_error = (
+                "no such column" in error_msg or
+                "collections.topic" in error_msg or
+                "schema" in error_msg
+            )
+            
+            if is_schema_error:
+                # Schema 错误（版本兼容性问题），清理数据库
+                if progress_callback:
+                    progress_callback(100, "⚠️ 检测到数据库 schema 错误（版本兼容性问题），正在清理...")
+                cleanup_corrupted_db(db_path, force=True)
+            else:
+                # 其他错误（如索引损坏），也清理
+                if progress_callback:
+                    progress_callback(100, "⚠️ 向量数据库索引可能损坏，将重新创建...")
+                cleanup_corrupted_db(db_path, force=True)
             return None
         
         if progress_callback:
@@ -489,6 +654,58 @@ def create_local_vector_store(docs_dict: Dict[str, Any], progress_callback=None,
         except ImportError:
             from langchain_core.documents import Document as LangDocument
         
+        # 步骤 0: 在开始处理之前，先检测并清理损坏的数据库目录（避免版本兼容性问题）
+        db_path = get_vector_db_path(folder_path) if folder_path else "./chroma_db"
+        
+        # 检查目录权限（在创建目录之前）
+        parent_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
+        if not os.path.exists(parent_dir):
+            os.makedirs(parent_dir, exist_ok=True)
+        if not os.access(parent_dir, os.W_OK):
+            raise PermissionError(f"没有写入权限: {parent_dir}")
+        
+        # 如果数据库目录已存在，先检测是否损坏，然后清理（避免版本兼容性问题）
+        if os.path.exists(db_path):
+            if progress_callback:
+                progress_callback(5, "🔄 检测向量数据库状态...")
+            
+            # 先检测数据库是否损坏（特别是 schema 兼容性问题）
+            is_corrupted = check_db_corrupted(db_path)
+            
+            if is_corrupted:
+                if progress_callback:
+                    progress_callback(5, "⚠️ 检测到数据库损坏（可能是版本兼容性问题），正在清理...")
+                cleanup_corrupted_db(db_path, force=True)
+                import time
+                time.sleep(1)  # 等待文件系统更新
+            else:
+                # 即使检测正常，如果文档变化了，也需要清理重建
+                # 这里先不清理，让后续逻辑处理
+                pass
+        
+        # 确保损坏的目录被清理
+        if os.path.exists(db_path):
+            # 再次尝试清理（防止检测遗漏）
+            try:
+                # 快速检测：如果目录存在但很小或结构异常，可能是损坏的
+                import time
+                if progress_callback:
+                    progress_callback(5, "🔄 清理旧的向量数据库目录...")
+                cleanup_corrupted_db(db_path, force=True)
+                time.sleep(0.5)  # 等待文件系统更新
+            except Exception:
+                pass
+        
+        # 如果仍然存在，尝试重命名（最后的手段）
+        if os.path.exists(db_path):
+            import time
+            backup_name = db_path + "_backup_" + str(int(time.time()))
+            try:
+                os.rename(db_path, backup_name)
+                print(f"⚠️ 无法删除目录，已重命名为备份: {backup_name}")
+            except Exception:
+                pass
+        
         # 提取文本内容
         if progress_callback:
             progress_callback(15, "🔄 步骤 1/4: 提取文档内容...")
@@ -537,38 +754,157 @@ def create_local_vector_store(docs_dict: Dict[str, Any], progress_callback=None,
         
         # 优先使用本地模型路径，避免网络下载
         model_path = get_model_path("BAAI/bge-small-zh-v1.5")
-        embeddings = HuggingFaceEmbeddings(
-            model_name=model_path,  # 中文优化的小模型
-            model_kwargs={'device': 'cpu'},
-            encode_kwargs={'normalize_embeddings': True}
-        )
+        
+        try:
+            embeddings = HuggingFaceEmbeddings(
+                model_name=model_path,  # 中文优化的小模型
+                model_kwargs={'device': 'cpu'},
+                encode_kwargs={'normalize_embeddings': True}
+            )
+        except Exception as model_error:
+            error_type = type(model_error).__name__
+            error_msg = str(model_error)
+            raise Exception(f"嵌入模型初始化失败 [{error_type}]: {error_msg}\n\n"
+                          f"可能的原因:\n"
+                          f"- 模型文件不存在或损坏\n"
+                          f"- 网络连接问题（无法下载模型）\n"
+                          f"- 模型路径配置错误: {model_path}\n\n"
+                          f"解决方案:\n"
+                          f"- 检查模型文件是否存在\n"
+                          f"- 使用 download_model.py 手动下载模型\n"
+                          f"- 检查网络连接") from model_error
         
         if progress_callback:
             progress_callback(70, "🔄 步骤 3/4: 生成向量嵌入（这可能需要几分钟，请耐心等待）...")
+        
+        # 检查文档是否为空
+        if not documents or len(documents) == 0:
+            raise ValueError("没有可用的文档内容，无法创建向量数据库。请检查文档是否为空或格式是否正确。")
         
         # 创建向量存储
         if progress_callback:
             progress_callback(85, "🔄 步骤 4/4: 创建向量存储...")
         
-        # 根据文件夹路径确定向量数据库存储位置
-        db_path = get_vector_db_path(folder_path) if folder_path else "./chroma_db"
-        os.makedirs(db_path, exist_ok=True)
+        # 确保使用全新的目录（如果目录仍然存在，再次清理）
+        if os.path.exists(db_path):
+            # 最后一次清理尝试
+            cleanup_corrupted_db(db_path, force=True)
+            import time
+            time.sleep(0.5)
+        
+        # 确保目录不存在后再创建
+        if not os.path.exists(db_path):
+            os.makedirs(db_path, exist_ok=True)
+        else:
+            # 如果仍然存在，尝试重命名
+            import time
+            backup_name = db_path + "_backup_" + str(int(time.time()))
+            try:
+                os.rename(db_path, backup_name)
+                print(f"⚠️ 无法删除目录，已重命名为备份: {backup_name}")
+                os.makedirs(db_path, exist_ok=True)
+            except Exception:
+                # 如果重命名也失败，尝试强制删除
+                cleanup_corrupted_db(db_path, force=True)
+                time.sleep(0.5)
+                if not os.path.exists(db_path):
+                    os.makedirs(db_path, exist_ok=True)
         
         # 兼容不同版本的参数名
-        try:
-            # 新版本使用 embedding_function
-            vectorstore = Chroma.from_documents(
-                documents=documents,
-                embedding_function=embeddings,
-                persist_directory=db_path
-            )
-        except TypeError:
-            # 旧版本使用 embedding
-            vectorstore = Chroma.from_documents(
-                documents=documents,
-                embedding=embeddings,
-                persist_directory=db_path
-            )
+        max_retries = 3  # 增加重试次数
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                # 新版本使用 embedding_function
+                if progress_callback:
+                    progress_callback(88, f"🔄 正在创建向量数据库（尝试 {attempt + 1}/{max_retries}）...")
+                vectorstore = Chroma.from_documents(
+                    documents=documents,
+                    embedding_function=embeddings,
+                    persist_directory=db_path
+                )
+                break  # 成功创建，退出循环
+            except TypeError as type_error:
+                # 旧版本使用 embedding
+                if progress_callback:
+                    progress_callback(88, "🔄 正在创建向量数据库（使用兼容模式）...")
+                try:
+                    vectorstore = Chroma.from_documents(
+                        documents=documents,
+                        embedding=embeddings,
+                        persist_directory=db_path
+                    )
+                    break  # 成功创建，退出循环
+                except Exception as e:
+                    last_error = e
+                    # 检查是否是数据库错误（包括 HNSW 索引错误和 schema 错误）
+                    error_msg = str(e).lower()
+                    is_db_error = ("hnsw" in error_msg or "index" in error_msg or "compaction" in error_msg or 
+                                  "segment" in error_msg or "no such column" in error_msg or 
+                                  "collections.topic" in error_msg or "schema" in error_msg)
+                    
+                    if is_db_error and attempt < max_retries - 1:
+                        # 如果是数据库错误，强制清理数据库并重试
+                        if progress_callback:
+                            progress_callback(87, "🔄 检测到数据库错误（可能是版本兼容性问题），强制清理并重试...")
+                        import time
+                        cleanup_corrupted_db(db_path, force=True)
+                        time.sleep(1)  # 等待文件系统完全释放
+                        if not os.path.exists(db_path):
+                            os.makedirs(db_path, exist_ok=True)
+                        continue
+                    elif is_db_error:
+                        # 重试次数用完，但仍然抛出详细错误
+                        raise Exception(f"创建向量数据库失败（兼容模式，已重试 {max_retries} 次）: {str(e)}\n\n"
+                                      f"检测到数据库错误（可能是版本兼容性问题），已尝试清理并重试，但仍然失败。\n"
+                                      f"错误类型: {error_msg}\n\n"
+                                      f"解决方案:\n"
+                                      f"1. 手动删除数据库目录: {db_path}\n"
+                                      f"2. 检查 ChromaDB 版本兼容性\n"
+                                      f"3. 尝试降级 ChromaDB: poetry add chromadb==0.4.22") from e
+                    else:
+                        # 其他错误，直接抛出
+                        raise Exception(f"创建向量数据库失败（兼容模式）: {str(e)}") from e
+            except Exception as create_error:
+                last_error = create_error
+                error_msg = str(create_error).lower()
+                # 检查是否是数据库错误（包括 HNSW 索引错误和 schema 错误）
+                is_db_error = ("hnsw" in error_msg or "index" in error_msg or "compaction" in error_msg or 
+                              "segment" in error_msg or "no such column" in error_msg or 
+                              "collections.topic" in error_msg or "schema" in error_msg)
+                
+                if is_db_error and attempt < max_retries - 1:
+                    # 如果是数据库错误，强制清理数据库并重试
+                    if progress_callback:
+                        progress_callback(87, "🔄 检测到数据库错误（可能是版本兼容性问题），强制清理并重试...")
+                    import time
+                    cleanup_corrupted_db(db_path, force=True)
+                    time.sleep(1)  # 等待文件系统完全释放
+                    if not os.path.exists(db_path):
+                        os.makedirs(db_path, exist_ok=True)
+                    continue
+                elif is_db_error:
+                    # 重试次数用完，但仍然抛出详细错误
+                    error_type = type(create_error).__name__
+                    raise Exception(f"创建向量数据库时出错 [{error_type}]（已重试 {max_retries} 次）: {str(create_error)}\n\n"
+                                  f"检测到数据库错误（可能是版本兼容性问题），已尝试清理并重试，但仍然失败。\n"
+                                  f"错误类型: {error_msg}\n\n"
+                                  f"解决方案:\n"
+                                  f"1. 手动删除数据库目录: {db_path}\n"
+                                  f"2. 检查 ChromaDB 版本兼容性\n"
+                                  f"3. 尝试降级 ChromaDB: poetry add chromadb==0.4.22") from create_error
+                else:
+                    # 其他错误，直接抛出
+                    error_type = type(create_error).__name__
+                    raise Exception(f"创建向量数据库时出错 [{error_type}]: {str(create_error)}") from create_error
+        else:
+            # 所有重试都失败了
+            if last_error:
+                error_type = type(last_error).__name__
+                raise Exception(f"创建向量数据库失败（已重试 {max_retries} 次） [{error_type}]: {str(last_error)}") from last_error
+            else:
+                raise Exception("创建向量数据库失败：未知错误")
         
         if progress_callback:
             progress_callback(100, "✅ 向量数据库创建完成！")
@@ -585,10 +921,68 @@ def create_local_vector_store(docs_dict: Dict[str, Any], progress_callback=None,
             st.warning(f"⚠️ 向量数据库功能不可用（缺少依赖包）: {error_msg}\n\n💡 提示：\n- 向量搜索功能将不可用\n- 文档阅读和问答功能仍可正常使用\n- 如需使用向量搜索，请安装: pip install langchain-text-splitters langchain-community chromadb")
         return None
     except Exception as e:
-        # 其他错误，静默失败，不影响应用使用
+        # 其他错误，显示详细错误信息
         error_msg = str(e)
+        error_type = type(e).__name__
+        
+        # 检查是否是 NumPy 2.0 兼容性问题
+        is_numpy_error = ("np.float_" in error_msg or "numpy" in error_msg.lower() or 
+                         "AttributeError" in error_type and "float_" in error_msg)
+        
+        # 记录错误到控制台（用于调试）
+        import traceback
+        print(f"❌ 向量数据库创建失败:")
+        print(f"   错误类型: {error_type}")
+        print(f"   错误信息: {error_msg}")
+        print(f"   详细堆栈:")
+        traceback.print_exc()
+        
         if 'st' in globals():
-            st.warning(f"⚠️ 向量数据库创建失败，已跳过此步骤\n\n💡 提示：\n- 向量搜索功能将不可用\n- 文档阅读和问答功能仍可正常使用\n- 问答功能会使用所有文档内容（可能较慢）")
+            if is_numpy_error:
+                # NumPy 2.0 兼容性错误
+                st.error(f"⚠️ **向量数据库创建失败 - NumPy 版本不兼容**\n\n"
+                        f"**错误类型**: `{error_type}`\n\n"
+                        f"**错误信息**: {error_msg}\n\n"
+                        f"**问题原因**:\n"
+                        f"ChromaDB 不兼容 NumPy 2.0，当前环境可能安装了 NumPy 2.0\n\n"
+                        f"**解决方案**:\n"
+                        f"1. **降级 NumPy 到 1.x 版本**（推荐）:\n"
+                        f"   ```bash\n"
+                        f"   poetry remove numpy\n"
+                        f"   poetry add \"numpy>=1.24.0,<2.0.0\"\n"
+                        f"   ```\n"
+                        f"   或使用 pip:\n"
+                        f"   ```bash\n"
+                        f"   pip install \"numpy>=1.24.0,<2.0.0\"\n"
+                        f"   ```\n\n"
+                        f"2. **重新安装所有依赖**:\n"
+                        f"   ```bash\n"
+                        f"   poetry install\n"
+                        f"   ```\n\n"
+                        f"3. **检查 NumPy 版本**:\n"
+                        f"   ```bash\n"
+                        f"   poetry run python -c \"import numpy; print(numpy.__version__)\"\n"
+                        f"   ```\n\n"
+                        f"💡 **提示**: 修复后重新运行程序即可")
+            else:
+                # 其他错误
+                st.error(f"⚠️ **向量数据库创建失败**\n\n"
+                        f"**错误类型**: `{error_type}`\n\n"
+                        f"**错误信息**: {error_msg}\n\n"
+                        f"**可能的原因**:\n"
+                        f"- 文档内容为空或格式不正确\n"
+                        f"- 嵌入模型加载失败（检查网络连接或模型文件）\n"
+                        f"- ChromaDB 版本不兼容\n"
+                        f"- NumPy 版本不兼容（NumPy 2.0 不兼容）\n"
+                        f"- 磁盘空间不足或没有写入权限\n"
+                        f"- 内存不足（文档太大）\n\n"
+                        f"**解决方案**:\n"
+                        f"1. 检查文档是否为空\n"
+                        f"2. 检查控制台输出的详细错误信息\n"
+                        f"3. 尝试减少文档数量或大小\n"
+                        f"4. 检查磁盘空间和权限\n"
+                        f"5. 如果问题持续，请查看完整错误堆栈\n\n"
+                        f"💡 **提示**: 向量搜索功能将不可用，但文档阅读和问答功能仍可正常使用（会使用所有文档内容，可能较慢）")
         return None
 
 # DeepSeek API接口

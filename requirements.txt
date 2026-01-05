@@ -8,16 +8,20 @@ pandas>=2.0.0
 openpyxl>=3.1.0
 
 # LangChain 相关
+# 注意：langchain-community 0.3.23+ 要求 NumPy 2.1.0+，与 ChromaDB 冲突
+# 使用 0.3.22 或更早版本以兼容 NumPy 1.x
 langchain>=0.1.0
-langchain-community>=0.0.20
+langchain-community>=0.0.20,<0.3.23
 langchain-core>=0.1.0
 langchain-text-splitters>=0.2.0
-# 确保使用支持新版本 zstandard 的 langsmith（避免编译错误）
-langsmith>=0.6.0
+# langsmith 版本限制（langchain-community 0.3.22 要求 < 0.4）
+langsmith>=0.1.125,<0.4
 
 # 向量数据库（如果安装失败，请参考 INSTALL.md）
 # 注意：chromadb 依赖 zstandard，可能需要编译工具
-chromadb>=0.4.0
+# NumPy 版本限制（ChromaDB 不兼容 NumPy 2.0）
+numpy>=1.24.0,<2.0.0
+chromadb>=0.4.22,<0.5.0
 
 # AI 模型相关
 sentence-transformers>=2.2.0
