@@ -681,16 +681,20 @@ def cleanup_corrupted_db(db_path: str, force: bool = True):
         return True
     
     if force:
-        # 强制清理模式：多次尝试，确保彻底删除
-        max_attempts = 5
+        # 强制清理模式：多次尝试，确保彻底删除（Windows上需要更长时间）
+        import platform
+        is_windows = platform.system() == 'Windows'
+        max_attempts = 8 if is_windows else 5  # Windows上增加重试次数
+        wait_time = 2.0 if is_windows else 0.5  # Windows上增加等待时间
+        
         for attempt in range(max_attempts):
             try:
                 # 先尝试正常删除
                 if os.path.exists(db_path):
                     shutil.rmtree(db_path, ignore_errors=False)
                 
-                # 等待一下，确保文件系统更新
-                time.sleep(0.5)
+                # 等待一下，确保文件系统更新（Windows需要更长时间）
+                time.sleep(wait_time)
                 
                 # 验证是否删除成功
                 if not os.path.exists(db_path):
@@ -700,8 +704,9 @@ def cleanup_corrupted_db(db_path: str, force: bool = True):
             except PermissionError as pe:
                 # Windows 上可能有文件被锁定，等待后重试
                 if attempt < max_attempts - 1:
-                    print(f"⚠️ 文件被锁定，等待后重试 ({attempt + 1}/{max_attempts})...")
-                    time.sleep(1)
+                    wait_interval = wait_time * (attempt + 1)  # 递增等待时间
+                    print(f"⚠️ 文件被锁定，等待 {wait_interval:.1f} 秒后重试 ({attempt + 1}/{max_attempts})...")
+                    time.sleep(wait_interval)
                     continue
                 else:
                     print(f"❌ 清理失败（文件被锁定）: {str(pe)}")
@@ -709,37 +714,38 @@ def cleanup_corrupted_db(db_path: str, force: bool = True):
                     return False
             except Exception as e:
                 if attempt < max_attempts - 1:
-                    print(f"⚠️ 清理失败，重试 ({attempt + 1}/{max_attempts}): {str(e)}")
-                    time.sleep(0.5)
+                    wait_interval = wait_time * (attempt + 1)
+                    print(f"⚠️ 清理失败，等待 {wait_interval:.1f} 秒后重试 ({attempt + 1}/{max_attempts}): {str(e)}")
+                    time.sleep(wait_interval)
                     continue
                 else:
                     print(f"❌ 清理失败: {str(e)}")
                     print(f"   请手动删除目录: {db_path}")
                     return False
         
-        # 如果多次尝试后仍然存在，尝试使用 ignore_errors
+        # 如果多次尝试后仍然存在，尝试使用 ignore_errors（忽略错误强制删除）
         if os.path.exists(db_path):
             try:
+                print(f"🔄 尝试强制删除模式（忽略错误）...")
                 shutil.rmtree(db_path, ignore_errors=True)
-                time.sleep(0.5)
+                time.sleep(wait_time * 2)  # 等待更长时间
                 if not os.path.exists(db_path):
                     print(f"✅ 已强制清理数据库目录: {db_path}")
                     return True
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"⚠️ 强制删除模式也失败: {str(e)}")
         
-        # 最后尝试：重命名目录（如果无法删除）
+        # 最后尝试：重命名目录（如果无法删除，至少不影响后续操作）
         if os.path.exists(db_path):
             try:
-                import tempfile
                 temp_name = db_path + "_deleted_" + str(int(time.time()))
                 os.rename(db_path, temp_name)
                 print(f"⚠️ 无法删除目录，已重命名为: {temp_name}")
-                print(f"   请稍后手动删除")
-                return True
+                print(f"   可以在程序关闭后手动删除该备份目录")
+                return True  # 重命名成功也算成功（不影响后续操作）
             except Exception as e:
-                print(f"❌ 无法清理目录: {str(e)}")
-                print(f"   请手动删除: {db_path}")
+                print(f"❌ 无法清理或重命名目录: {str(e)}")
+                print(f"   目录可能被其他进程占用，请手动删除: {db_path}")
                 return False
         
         return False
@@ -832,28 +838,71 @@ def load_existing_vector_store(folder_path: str = None, progress_callback=None):
             embedding_function=embeddings
         )
         
-        # 验证向量数据库是否可用（尝试获取数量，如果索引损坏会在这里失败）
+        # 验证向量数据库是否可用（使用更温和的验证方法）
+        # 只对真正的schema错误或维度不匹配错误进行清理，其他错误只记录但不清理
         try:
-            _ = len(vectorstore)  # 这会触发 count() 调用，如果索引损坏会抛出异常
+            # 尝试获取数据库中的文档数量
+            doc_count = len(vectorstore)
+            
+            # 如果文档数量为0，可能是空数据库，但不算损坏
+            if doc_count == 0:
+                if progress_callback:
+                    progress_callback(100, "⚠️ 向量数据库为空，将重新创建...")
+                return None
+            
+            # 尝试进行一次简单的查询来验证数据库是否真的可用
+            # 使用一个简单的测试查询，如果失败说明数据库有问题
+            try:
+                # 尝试获取第一个文档（如果存在）
+                results = vectorstore.similarity_search("test", k=1)
+                # 如果能正常返回结果（即使为空），说明数据库可用
+            except Exception as query_error:
+                # 查询失败，检查是否是schema错误
+                error_msg = str(query_error).lower()
+                is_schema_error = (
+                    "no such column" in error_msg or
+                    "collections.topic" in error_msg or
+                    "schema" in error_msg or
+                    "dimensionality" in error_msg or
+                    "dimension" in error_msg
+                )
+                
+                if is_schema_error:
+                    # Schema错误或维度不匹配，清理数据库
+                    if progress_callback:
+                        progress_callback(100, "⚠️ 检测到数据库 schema 错误或维度不匹配，正在清理...")
+                    cleanup_corrupted_db(db_path, force=True)
+                    return None
+                else:
+                    # 其他查询错误，可能是临时性问题，不清理数据库，但返回None让调用者重新创建
+                    # 记录错误但不清理，因为可能是临时性问题
+                    print(f"⚠️ 向量数据库查询失败（可能是临时性问题）: {str(query_error)}")
+                    if progress_callback:
+                        progress_callback(100, "⚠️ 向量数据库查询失败，将重新创建...")
+                    return None
+                    
         except Exception as verify_error:
-            # 索引文件可能损坏，检测是否是 schema 错误
+            # len() 调用失败，检查是否是schema错误
             error_msg = str(verify_error).lower()
             is_schema_error = (
                 "no such column" in error_msg or
                 "collections.topic" in error_msg or
-                "schema" in error_msg
+                "schema" in error_msg or
+                "dimensionality" in error_msg or
+                "dimension" in error_msg
             )
             
             if is_schema_error:
-                # Schema 错误（版本兼容性问题），清理数据库
+                # Schema错误或维度不匹配，清理数据库
                 if progress_callback:
-                    progress_callback(100, "⚠️ 检测到数据库 schema 错误（版本兼容性问题），正在清理...")
+                    progress_callback(100, "⚠️ 检测到数据库 schema 错误或维度不匹配，正在清理...")
                 cleanup_corrupted_db(db_path, force=True)
             else:
-                # 其他错误（如索引损坏），也清理
+                # 其他错误（可能是临时性问题），不清理数据库，只返回None
+                # 记录错误但不清理，因为可能是临时性问题
+                print(f"⚠️ 向量数据库验证失败（可能是临时性问题）: {str(verify_error)}")
                 if progress_callback:
-                    progress_callback(100, "⚠️ 向量数据库索引可能损坏，将重新创建...")
-                cleanup_corrupted_db(db_path, force=True)
+                    progress_callback(100, "⚠️ 向量数据库验证失败，将重新创建...")
             return None
         
         if progress_callback:
@@ -881,6 +930,29 @@ def calculate_content_hash(content: Any) -> str:
     
     return hashlib.md5(content_str.encode('utf-8')).hexdigest()
 
+def normalize_path(path: str) -> str:
+    """规范化路径，用于比较"""
+    if not path:
+        return ""
+    # 统一使用 os.path.normpath 和 os.path.abspath 来规范化路径
+    try:
+        # 先规范化路径格式（统一斜杠）
+        normalized = os.path.normpath(path)
+        # 转换为绝对路径（如果可能）
+        if os.path.exists(normalized):
+            normalized = os.path.abspath(normalized)
+        else:
+            # 如果路径不存在，仍然规范化格式
+            normalized = os.path.normpath(normalized)
+        # 统一转换为小写（Windows路径大小写不敏感）
+        if os.name == 'nt':  # Windows
+            normalized = normalized.lower()
+        return normalized
+    except Exception as e:
+        # 如果规范化失败，至少统一格式
+        print(f"⚠️ 路径规范化失败: {path}, 错误: {str(e)}")
+        return os.path.normpath(path).lower() if os.name == 'nt' else os.path.normpath(path)
+
 def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
     """检查文档是否发生变化（包括模型变化）
     
@@ -896,6 +968,7 @@ def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
     signature_file = os.path.join(db_path, ".docs_signature.json")
     
     if not os.path.exists(signature_file):
+        print(f"📝 文档签名文件不存在: {signature_file}")
         return True  # 签名文件不存在，认为文档已变化
     
     try:
@@ -910,7 +983,7 @@ def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
         current_embedding_dimension = get_embedding_model_dimension(current_embedding_model)
         
         if old_embedding_model != current_embedding_model or old_embedding_dimension != current_embedding_dimension:
-            # 模型变化，需要重新创建向量数据库
+            print(f"🔄 嵌入模型变化: {old_embedding_model} ({old_embedding_dimension}维) -> {current_embedding_model} ({current_embedding_dimension}维)")
             return True
         
         # 生成当前文档签名
@@ -938,22 +1011,57 @@ def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
             
             current_signature["files"][filename] = file_info
         
-        # 比较签名
-        if old_signature.get("folder_path") != current_signature["folder_path"]:
-            return True
+        # 比较签名 - 规范化路径后再比较
+        old_folder_path = old_signature.get("folder_path")
+        current_folder_path = current_signature["folder_path"]
+        
+        # 规范化路径进行比较（处理 None、空字符串、路径格式差异等情况）
+        old_path_norm = normalize_path(old_folder_path) if old_folder_path else ""
+        current_path_norm = normalize_path(current_folder_path) if current_folder_path else ""
+        
+        # 路径比较逻辑：
+        # 1. 如果两个路径都不为空且不同，才认为路径变化
+        # 2. 如果旧路径为空但新路径不为空，可能是首次创建，继续检查文件内容
+        # 3. 如果旧路径不为空但新路径为空，可能是路径丢失，继续检查文件内容（如果文件内容匹配，仍可使用）
+        # 4. 如果两个路径都为空，继续检查文件内容
+        if old_path_norm and current_path_norm:
+            # 两个路径都不为空，需要比较
+            if old_path_norm != current_path_norm:
+                print(f"📁 文件夹路径变化: {old_folder_path} -> {current_folder_path}")
+                return True
+            # 路径相同，继续检查文件内容
+        elif not old_path_norm and current_path_norm:
+            # 旧路径为空但新路径不为空，可能是首次创建
+            # 如果文件内容哈希都匹配，可以认为未变化（兼容旧版本）
+            print(f"📁 文件夹路径状态变化: 旧路径为空, 新路径={current_folder_path}")
+            # 继续检查文件内容
+        elif old_path_norm and not current_path_norm:
+            # 旧路径不为空但新路径为空，可能是路径丢失
+            # 如果文件内容哈希都匹配，仍可使用（兼容性）
+            print(f"📁 文件夹路径状态变化: 旧路径={old_folder_path}, 新路径为空")
+            # 继续检查文件内容
+        # 如果两个路径都为空，继续检查文件内容
         
         if old_signature.get("file_count") != current_signature["file_count"]:
+            print(f"📊 文件数量变化: {old_signature.get('file_count')} -> {current_signature['file_count']}")
             return True
         
         old_files = old_signature.get("files", {})
         current_files = current_signature["files"]
         
         if set(old_files.keys()) != set(current_files.keys()):
+            old_keys = set(old_files.keys())
+            current_keys = set(current_files.keys())
+            added = current_keys - old_keys
+            removed = old_keys - current_keys
+            print(f"📄 文件名变化: 新增={added}, 删除={removed}")
             return True
         
         # 检查文件内容哈希（优先）和文件大小/修改时间
+        changed_files = []
         for filename in old_files.keys():
             if filename not in current_files:
+                changed_files.append(f"{filename} (已删除)")
                 return True
             
             old_info = old_files[filename]
@@ -968,6 +1076,7 @@ def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
                 if old_hash:
                     # 两者都有哈希值，直接比较
                     if old_hash != current_hash:
+                        changed_files.append(f"{filename} (内容哈希变化)")
                         return True
                     # 哈希值相同，认为文档未变化（即使修改时间不同）
                     continue
@@ -977,6 +1086,7 @@ def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
                     # 因为修改时间可能因为各种原因变化（文件被重新保存、系统时间调整等）
                     # 但文件大小相同通常意味着内容相同（虽然不是100%确定，但概率很高）
                     if old_info.get("size") != current_info.get("size"):
+                        changed_files.append(f"{filename} (大小变化: {old_info.get('size')} -> {current_info.get('size')})")
                         return True
                     # 文件大小相同，认为文档未变化（即使修改时间不同）
                     # 签名文件会在保存时更新，添加内容哈希，下次比较会更准确
@@ -987,11 +1097,20 @@ def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
             if (old_info.get("size") != current_info.get("size") or 
                 (old_info.get("mtime") and current_info.get("mtime") and
                  abs(old_info.get("mtime", 0) - current_info.get("mtime", 0)) > 1)):
+                changed_files.append(f"{filename} (大小或修改时间变化)")
                 return True
         
+        if changed_files:
+            print(f"📝 检测到文档变化: {', '.join(changed_files)}")
+            return True
+        
+        print("✅ 文档未变化，可以使用已有向量数据库")
         return False  # 文档未变化
     except Exception as e:
-        # 读取签名失败，认为文档已变化
+        # 读取签名失败，记录错误但认为文档已变化
+        print(f"❌ 读取文档签名失败: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return True
 
 def get_embedding_model_dimension(model_name: str) -> int:
@@ -1057,6 +1176,63 @@ def save_docs_signature(docs_dict: Dict[str, Any], folder_path: str):
             json.dump(signature, f, indent=2, ensure_ascii=False)
     except Exception:
         pass  # 保存签名失败不影响主流程
+
+class ProgressEmbeddings:
+    """包装的嵌入模型类，用于在生成向量时更新进度"""
+    def __init__(self, embeddings, progress_callback=None, total_docs=0, start_progress=70, end_progress=85):
+        self.embeddings = embeddings
+        self.progress_callback = progress_callback
+        self.total_docs = total_docs
+        self.start_progress = start_progress
+        self.end_progress = end_progress
+        self.processed_docs = 0
+        self.batch_size = 50  # 内部批处理大小，用于进度更新
+    
+    def embed_documents(self, texts):
+        """批量生成向量，并更新进度（如果一次性处理所有文档，则内部分批处理）"""
+        total_texts = len(texts)
+        
+        # 如果文档数量较少，直接处理
+        if total_texts <= self.batch_size:
+            result = self.embeddings.embed_documents(texts)
+            self.processed_docs += total_texts
+            
+            if self.progress_callback and self.total_docs > 0:
+                progress = self.start_progress + int((self.processed_docs / self.total_docs) * (self.end_progress - self.start_progress))
+                progress = min(progress, self.end_progress)
+                self.progress_callback(progress, f"🔄 步骤 3/4: 生成向量嵌入 ({self.processed_docs}/{self.total_docs} 个文档块)...")
+            
+            return result
+        
+        # 如果文档数量较多，分批处理以显示进度
+        all_embeddings = []
+        num_batches = (total_texts + self.batch_size - 1) // self.batch_size
+        
+        for batch_idx in range(num_batches):
+            start_idx = batch_idx * self.batch_size
+            end_idx = min(start_idx + self.batch_size, total_texts)
+            batch_texts = texts[start_idx:end_idx]
+            
+            # 生成当前批次的向量
+            batch_embeddings = self.embeddings.embed_documents(batch_texts)
+            all_embeddings.extend(batch_embeddings)
+            
+            # 更新进度
+            self.processed_docs += len(batch_texts)
+            if self.progress_callback and self.total_docs > 0:
+                progress = self.start_progress + int((self.processed_docs / self.total_docs) * (self.end_progress - self.start_progress))
+                progress = min(progress, self.end_progress)
+                self.progress_callback(progress, f"🔄 步骤 3/4: 生成向量嵌入 ({self.processed_docs}/{self.total_docs} 个文档块)...")
+        
+        return all_embeddings
+    
+    def embed_query(self, text):
+        """单个查询向量化（不更新进度）"""
+        return self.embeddings.embed_query(text)
+    
+    def __getattr__(self, name):
+        """代理其他属性和方法到原始 embeddings 对象"""
+        return getattr(self.embeddings, name)
 
 def create_local_vector_store(docs_dict: Dict[str, Any], progress_callback=None, folder_path: str = None):
     """创建本地向量数据库，使用开源嵌入模型
@@ -1164,7 +1340,22 @@ def create_local_vector_store(docs_dict: Dict[str, Any], progress_callback=None,
                         progress_callback(5, "⚠️ 检测到数据库损坏（可能是版本兼容性问题），正在清理...")
                 cleanup_corrupted_db(db_path, force=True)
                 import time
-                time.sleep(1)  # 等待文件系统更新
+                time.sleep(2)  # 增加等待时间，确保文件系统完全更新
+                # 再次确认目录已删除
+                if os.path.exists(db_path):
+                    import shutil
+                    try:
+                        shutil.rmtree(db_path)
+                        print(f"✅ 强制删除数据库目录: {db_path}")
+                    except Exception as cleanup_error:
+                        print(f"⚠️ 强制删除失败: {str(cleanup_error)}")
+                        # 如果删除失败，重命名目录
+                        backup_name = db_path + "_backup_" + str(int(time.time()))
+                        try:
+                            os.rename(db_path, backup_name)
+                            print(f"⚠️ 已重命名数据库目录为备份: {backup_name}")
+                        except:
+                            pass
             else:
                 # 数据库正常，但由于文档变化需要重新创建，清理旧数据库
                 # 注意：调用者应该已经检查过文档变化，这里直接清理即可
@@ -1243,32 +1434,63 @@ def create_local_vector_store(docs_dict: Dict[str, Any], progress_callback=None,
                           f"- 使用 download_model.py 手动下载模型\n"
                           f"- 检查网络连接") from model_error
         
-        if progress_callback:
-            progress_callback(70, "🔄 步骤 3/4: 生成向量嵌入（这可能需要几分钟，请耐心等待）...")
-        
         # 检查文档是否为空
         if not documents or len(documents) == 0:
             raise ValueError("没有可用的文档内容，无法创建向量数据库。请检查文档是否为空或格式是否正确。")
         
-        # 创建向量存储
+        # 确保目录不存在后再创建（之前的清理应该已经删除了目录）
+        # 如果目录仍然存在，强制删除（可能是维度不匹配的旧数据库）
+        if os.path.exists(db_path):
+            import shutil
+            import time
+            
+            # 使用cleanup_corrupted_db函数进行强力清理
+            cleanup_success = cleanup_corrupted_db(db_path, force=True)
+            
+            if not cleanup_success:
+                # 如果清理失败，尝试重命名作为备份（避免阻塞后续操作）
+                backup_name = db_path + "_backup_" + str(int(time.time()))
+                try:
+                    os.rename(db_path, backup_name)
+                    print(f"⚠️ 无法删除目录，已重命名为备份: {backup_name}")
+                    print(f"   可以在程序关闭后手动删除该备份目录")
+                except Exception as rename_error:
+                    # 如果重命名也失败，记录警告但不抛出异常（允许继续创建新数据库）
+                    print(f"⚠️ 无法删除或重命名目录: {str(rename_error)}")
+                    print(f"   目录 {db_path} 可能被其他进程占用")
+                    print(f"   建议：关闭其他可能使用该数据库的程序，然后手动删除目录")
+                    # 尝试创建一个带时间戳的新目录名
+                    db_path = db_path + "_new_" + str(int(time.time()))
+                    print(f"   将使用新目录: {db_path}")
+        
+        # 创建新目录
+        os.makedirs(db_path, exist_ok=True)
+        
+        # 步骤 3: 预生成向量嵌入（带进度更新，用于显示进度和预热模型）
+        # 注意：Chroma.from_documents 会在内部重新生成向量，但预生成可以：
+        # 1. 显示详细的进度更新
+        # 2. 预热模型（首次使用时会加载模型到内存）
+        # 3. 提前发现模型错误
+        total_docs = len(documents)
+        batch_size = 50  # 每批处理50个文档，避免内存占用过大
+        
+        # 步骤 3: 使用带进度更新的嵌入模型
+        total_docs = len(documents)
+        if progress_callback:
+            progress_callback(70, f"🔄 步骤 3/4: 生成向量嵌入（共 {total_docs} 个文档块，这可能需要几分钟，请耐心等待）...")
+        
+        # 使用包装的嵌入模型，在生成向量时自动更新进度
+        progress_embeddings = ProgressEmbeddings(
+            embeddings=embeddings,
+            progress_callback=progress_callback,
+            total_docs=total_docs,
+            start_progress=70,
+            end_progress=85
+        )
+        
+        # 步骤 4: 创建向量存储（使用带进度更新的嵌入模型）
         if progress_callback:
             progress_callback(85, "🔄 步骤 4/4: 创建向量存储...")
-        
-        # 确保目录不存在后再创建（之前的清理应该已经删除了目录）
-        if not os.path.exists(db_path):
-            os.makedirs(db_path, exist_ok=True)
-        else:
-            # 如果目录仍然存在（清理失败），尝试重命名作为备份
-            import time
-            backup_name = db_path + "_backup_" + str(int(time.time()))
-            try:
-                os.rename(db_path, backup_name)
-                print(f"⚠️ 无法删除目录，已重命名为备份: {backup_name}")
-                os.makedirs(db_path, exist_ok=True)
-            except Exception as rename_error:
-                # 如果重命名也失败，记录错误但继续尝试创建（ChromaDB可能会处理）
-                print(f"⚠️ 无法重命名目录: {str(rename_error)}")
-                # 不强制删除，让ChromaDB尝试处理现有目录
         
         # 兼容不同版本的参数名
         max_retries = 3  # 增加重试次数
@@ -1276,88 +1498,117 @@ def create_local_vector_store(docs_dict: Dict[str, Any], progress_callback=None,
         
         for attempt in range(max_retries):
             try:
-                # 新版本使用 embedding_function
+                # 在创建前再次确认目录是空的（防止维度不匹配）
+                if os.path.exists(db_path):
+                    # 检查目录是否为空
+                    try:
+                        dir_contents = os.listdir(db_path)
+                        if dir_contents:
+                            # 目录不为空，可能是旧数据库残留，强制清理
+                            import shutil
+                            if progress_callback:
+                                progress_callback(87, f"⚠️ 检测到旧数据库残留，正在清理（尝试 {attempt + 1}/{max_retries}）...")
+                            try:
+                                shutil.rmtree(db_path)
+                                os.makedirs(db_path, exist_ok=True)
+                                print(f"✅ 清理了非空数据库目录: {db_path}")
+                                import time
+                                time.sleep(1)  # 等待文件系统更新
+                            except Exception as cleanup_error:
+                                print(f"⚠️ 清理目录失败: {str(cleanup_error)}")
+                    except Exception:
+                        pass  # 如果无法列出目录，继续尝试创建
+                
+                # 尝试使用 embedding 参数（标准参数名）
                 if progress_callback:
                     progress_callback(88, f"🔄 正在创建向量数据库（尝试 {attempt + 1}/{max_retries}）...")
-                vectorstore = Chroma.from_documents(
-                    documents=documents,
-                    embedding_function=embeddings,
-                    persist_directory=db_path
-                )
-                break  # 成功创建，退出循环
-            except TypeError as type_error:
-                # 旧版本使用 embedding
-                if progress_callback:
-                    progress_callback(88, "🔄 正在创建向量数据库（使用兼容模式）...")
                 try:
+                    # 优先使用 embedding 参数（这是标准参数名）
                     vectorstore = Chroma.from_documents(
                         documents=documents,
-                        embedding=embeddings,
+                        embedding=progress_embeddings,
                         persist_directory=db_path
                     )
                     break  # 成功创建，退出循环
-                except Exception as e:
-                    last_error = e
-                    # 检查是否是数据库错误（包括 HNSW 索引错误和 schema 错误）
-                    error_msg = str(e).lower()
-                    is_db_error = ("hnsw" in error_msg or "index" in error_msg or "compaction" in error_msg or 
-                                  "segment" in error_msg or "no such column" in error_msg or 
-                                  "collections.topic" in error_msg or "schema" in error_msg)
-                    
-                    if is_db_error and attempt < max_retries - 1:
-                        # 如果是数据库错误，强制清理数据库并重试
-                        if progress_callback:
-                            progress_callback(87, "🔄 检测到数据库错误（可能是版本兼容性问题），强制清理并重试...")
-                        import time
-                        cleanup_corrupted_db(db_path, force=True)
-                        time.sleep(1)  # 等待文件系统完全释放
-                        if not os.path.exists(db_path):
-                            os.makedirs(db_path, exist_ok=True)
-                        continue
-                    elif is_db_error:
-                        # 重试次数用完，但仍然抛出详细错误
-                        raise Exception(f"创建向量数据库失败（兼容模式，已重试 {max_retries} 次）: {str(e)}\n\n"
-                                      f"检测到数据库错误（可能是版本兼容性问题），已尝试清理并重试，但仍然失败。\n"
-                                      f"错误类型: {error_msg}\n\n"
-                                      f"解决方案:\n"
-                                      f"1. 手动删除数据库目录: {db_path}\n"
-                                      f"2. 检查 ChromaDB 版本兼容性\n"
-                                      f"3. 尝试降级 ChromaDB: poetry add chromadb==0.4.22") from e
+                except TypeError as param_error:
+                    # 如果 embedding 参数不支持，尝试 embedding_function
+                    error_msg = str(param_error).lower()
+                    if "embedding" in error_msg or "unexpected keyword" in error_msg:
+                        try:
+                            vectorstore = Chroma.from_documents(
+                                documents=documents,
+                                embedding_function=progress_embeddings,
+                                persist_directory=db_path
+                            )
+                            break  # 成功创建，退出循环
+                        except TypeError:
+                            # 如果两种参数名都不支持，抛出原始错误
+                            raise param_error
                     else:
-                        # 其他错误，直接抛出
-                        raise Exception(f"创建向量数据库失败（兼容模式）: {str(e)}") from e
+                        raise
             except Exception as create_error:
-                last_error = create_error
+                # 检查是否是维度不匹配错误
                 error_msg = str(create_error).lower()
-                # 检查是否是数据库错误（包括 HNSW 索引错误和 schema 错误）
-                is_db_error = ("hnsw" in error_msg or "index" in error_msg or "compaction" in error_msg or 
-                              "segment" in error_msg or "no such column" in error_msg or 
-                              "collections.topic" in error_msg or "schema" in error_msg)
-                
-                if is_db_error and attempt < max_retries - 1:
-                    # 如果是数据库错误，强制清理数据库并重试
+                if "dimension" in error_msg or "dimensionality" in error_msg:
+                    # 维度不匹配，强制清理数据库并重试
                     if progress_callback:
-                        progress_callback(87, "🔄 检测到数据库错误（可能是版本兼容性问题），强制清理并重试...")
+                        progress_callback(87, f"⚠️ 检测到维度不匹配错误，正在清理旧数据库并重试（尝试 {attempt + 1}/{max_retries}）...")
+                    import shutil
                     import time
-                    cleanup_corrupted_db(db_path, force=True)
-                    time.sleep(1)  # 等待文件系统完全释放
-                    if not os.path.exists(db_path):
+                    try:
+                        if os.path.exists(db_path):
+                            shutil.rmtree(db_path)
+                            print(f"✅ 清理了维度不匹配的数据库目录: {db_path}")
+                            time.sleep(2)  # 等待文件系统更新
                         os.makedirs(db_path, exist_ok=True)
+                    except Exception as cleanup_error:
+                        print(f"⚠️ 清理数据库目录失败: {str(cleanup_error)}")
+                    
+                    # 如果是最后一次尝试，抛出详细错误
+                    if attempt == max_retries - 1:
+                        raise Exception(f"创建向量数据库失败：维度不匹配\n\n"
+                                      f"错误信息: {str(create_error)}\n\n"
+                                      f"可能的原因:\n"
+                                      f"- 旧向量数据库使用了不同维度的模型\n"
+                                      f"- 模型切换后未正确清理旧数据库\n\n"
+                                      f"解决方案:\n"
+                                      f"1. 手动删除向量数据库目录: {db_path}\n"
+                                      f"2. 或在侧边栏的'向量数据库管理'中删除\n"
+                                      f"3. 然后重新加载文件夹") from create_error
+                    # 否则继续重试
                     continue
-                elif is_db_error:
-                    # 重试次数用完，但仍然抛出详细错误
-                    error_type = type(create_error).__name__
-                    raise Exception(f"创建向量数据库时出错 [{error_type}]（已重试 {max_retries} 次）: {str(create_error)}\n\n"
-                                  f"检测到数据库错误（可能是版本兼容性问题），已尝试清理并重试，但仍然失败。\n"
-                                  f"错误类型: {error_msg}\n\n"
-                                  f"解决方案:\n"
-                                  f"1. 手动删除数据库目录: {db_path}\n"
-                                  f"2. 检查 ChromaDB 版本兼容性\n"
-                                  f"3. 尝试降级 ChromaDB: poetry add chromadb==0.4.22") from create_error
+                elif isinstance(create_error, TypeError) and "multiple values for keyword argument" in str(create_error):
+                    # 参数重复传递错误，尝试使用不同的参数传递方式
+                    if progress_callback:
+                        progress_callback(88, f"🔄 检测到参数冲突，尝试使用替代方式创建向量数据库（尝试 {attempt + 1}/{max_retries}）...")
+                    try:
+                        # 尝试只使用位置参数传递 documents，其他参数使用关键字
+                        vectorstore = Chroma.from_documents(
+                            documents,
+                            embedding=progress_embeddings,
+                            persist_directory=db_path
+                        )
+                        break  # 成功创建，退出循环
+                    except Exception as e:
+                        # 如果还是失败，记录错误并在最后一次尝试时抛出
+                        last_error = e
+                        if attempt == max_retries - 1:
+                            raise Exception(f"创建向量数据库失败：参数传递错误\n\n"
+                                          f"错误信息: {str(create_error)}\n\n"
+                                          f"可能的原因:\n"
+                                          f"- langchain_chroma 版本不兼容\n"
+                                          f"- 参数传递方式冲突\n\n"
+                                          f"解决方案:\n"
+                                          f"1. 更新 langchain-chroma: pip install --upgrade langchain-chroma\n"
+                                          f"2. 检查 Chroma 版本兼容性\n"
+                                          f"3. 查看完整错误信息以获取更多细节") from create_error
+                        continue
                 else:
-                    # 其他错误，直接抛出
-                    error_type = type(create_error).__name__
-                    raise Exception(f"创建向量数据库时出错 [{error_type}]: {str(create_error)}") from create_error
+                    # 其他错误，记录并重试
+                    last_error = create_error
+                    if attempt == max_retries - 1:
+                        raise
+                    continue
         else:
             # 所有重试都失败了
             if last_error:
@@ -1397,53 +1648,56 @@ def create_local_vector_store(docs_dict: Dict[str, Any], progress_callback=None,
         print(f"   详细堆栈:")
         traceback.print_exc()
         
-        if 'st' in globals():
-            if is_numpy_error:
-                # NumPy 2.0 兼容性错误
-                st.error(f"⚠️ **向量数据库创建失败 - NumPy 版本不兼容**\n\n"
-                        f"**错误类型**: `{error_type}`\n\n"
-                        f"**错误信息**: {error_msg}\n\n"
-                        f"**问题原因**:\n"
-                        f"ChromaDB 不兼容 NumPy 2.0，当前环境可能安装了 NumPy 2.0\n\n"
-                        f"**解决方案**:\n"
-                        f"1. **降级 NumPy 到 1.x 版本**（推荐）:\n"
-                        f"   ```bash\n"
-                        f"   poetry remove numpy\n"
-                        f"   poetry add \"numpy>=1.24.0,<2.0.0\"\n"
-                        f"   ```\n"
-                        f"   或使用 pip:\n"
-                        f"   ```bash\n"
-                        f"   pip install \"numpy>=1.24.0,<2.0.0\"\n"
-                        f"   ```\n\n"
-                        f"2. **重新安装所有依赖**:\n"
-                        f"   ```bash\n"
-                        f"   poetry install\n"
-                        f"   ```\n\n"
-                        f"3. **检查 NumPy 版本**:\n"
-                        f"   ```bash\n"
-                        f"   poetry run python -c \"import numpy; print(numpy.__version__)\"\n"
-                        f"   ```\n\n"
-                        f"💡 **提示**: 修复后重新运行程序即可")
-            else:
-                # 其他错误
-                st.error(f"⚠️ **向量数据库创建失败**\n\n"
-                        f"**错误类型**: `{error_type}`\n\n"
-                        f"**错误信息**: {error_msg}\n\n"
-                        f"**可能的原因**:\n"
-                        f"- 文档内容为空或格式不正确\n"
-                        f"- 嵌入模型加载失败（检查网络连接或模型文件）\n"
-                        f"- ChromaDB 版本不兼容\n"
-                        f"- NumPy 版本不兼容（NumPy 2.0 不兼容）\n"
-                        f"- 磁盘空间不足或没有写入权限\n"
-                        f"- 内存不足（文档太大）\n\n"
-                        f"**解决方案**:\n"
-                        f"1. 检查文档是否为空\n"
-                        f"2. 检查控制台输出的详细错误信息\n"
-                        f"3. 尝试减少文档数量或大小\n"
-                        f"4. 检查磁盘空间和权限\n"
-                        f"5. 如果问题持续，请查看完整错误堆栈\n\n"
-                        f"💡 **提示**: 向量搜索功能将不可用，但文档阅读和问答功能仍可正常使用（会使用所有文档内容，可能较慢）")
-        return None
+        # 不再在这里直接显示错误，而是抛出异常让调用者处理
+        # 这样调用者可以使用占位符确保错误提示与输入框等宽
+        if is_numpy_error:
+            # NumPy 2.0 兼容性错误
+            error_detail = (f"⚠️ **向量数据库创建失败 - NumPy 版本不兼容**\n\n"
+                          f"**错误类型**: `{error_type}`\n\n"
+                          f"**错误信息**: {error_msg}\n\n"
+                          f"**问题原因**:\n"
+                          f"ChromaDB 不兼容 NumPy 2.0，当前环境可能安装了 NumPy 2.0\n\n"
+                          f"**解决方案**:\n"
+                          f"1. **降级 NumPy 到 1.x 版本**（推荐）:\n"
+                          f"   ```bash\n"
+                          f"   poetry remove numpy\n"
+                          f"   poetry add \"numpy>=1.24.0,<2.0.0\"\n"
+                          f"   ```\n"
+                          f"   或使用 pip:\n"
+                          f"   ```bash\n"
+                          f"   pip install \"numpy>=1.24.0,<2.0.0\"\n"
+                          f"   ```\n\n"
+                          f"2. **重新安装所有依赖**:\n"
+                          f"   ```bash\n"
+                          f"   poetry install\n"
+                          f"   ```\n\n"
+                          f"3. **检查 NumPy 版本**:\n"
+                          f"   ```bash\n"
+                          f"   poetry run python -c \"import numpy; print(numpy.__version__)\"\n"
+                          f"   ```\n\n"
+                          f"💡 **提示**: 修复后重新运行程序即可")
+        else:
+            # 其他错误
+            error_detail = (f"⚠️ **向量数据库创建失败**\n\n"
+                          f"**错误类型**: `{error_type}`\n\n"
+                          f"**错误信息**: {error_msg}\n\n"
+                          f"**可能的原因**:\n"
+                          f"- 文档内容为空或格式不正确\n"
+                          f"- 嵌入模型加载失败（检查网络连接或模型文件）\n"
+                          f"- ChromaDB 版本不兼容\n"
+                          f"- NumPy 版本不兼容（NumPy 2.0 不兼容）\n"
+                          f"- 磁盘空间不足或没有写入权限\n"
+                          f"- 内存不足（文档太大）\n\n"
+                          f"**解决方案**:\n"
+                          f"1. 检查文档是否为空\n"
+                          f"2. 检查控制台输出的详细错误信息\n"
+                          f"3. 尝试减少文档数量或大小\n"
+                          f"4. 检查磁盘空间和权限\n"
+                          f"5. 如果问题持续，请查看完整错误堆栈\n\n"
+                          f"💡 **提示**: 向量搜索功能将不可用，但文档阅读和问答功能仍可正常使用（会使用所有文档内容，可能较慢）")
+        
+        # 抛出异常，让调用者使用占位符显示错误
+        raise Exception(error_detail)
 
 # DeepSeek API接口
 def query_deepseek(prompt: str, api_key: str, model: str = "deepseek-chat", max_tokens: int = 2000, 
@@ -1662,6 +1916,50 @@ def show_footer():
 
 # Streamlit界面
 def main():
+    # 添加自定义CSS样式，将进度条和primary按钮改为草绿色
+    st.markdown("""
+    <style>
+    /* 进度条颜色改为草绿色 - 使用更通用的选择器 */
+    .stProgress .st-bo {
+        background-color: #7cb342 !important;
+    }
+    .stProgress > div > div > div > div {
+        background-color: #7cb342 !important;
+    }
+    div[data-testid="stProgress"] > div > div > div > div {
+        background-color: #7cb342 !important;
+    }
+    
+    /* Primary按钮颜色改为草绿色 - 使用更通用的选择器 */
+    .stButton > button[kind="primary"],
+    .stButton > button[type="primary"],
+    button[kind="primary"],
+    button[type="primary"] {
+        background-color: #7cb342 !important;
+        border-color: #7cb342 !important;
+        color: white !important;
+    }
+    
+    /* Primary按钮悬停效果 */
+    .stButton > button[kind="primary"]:hover,
+    .stButton > button[type="primary"]:hover,
+    button[kind="primary"]:hover,
+    button[type="primary"]:hover {
+        background-color: #689f38 !important;
+        border-color: #689f38 !important;
+    }
+    
+    /* Primary按钮激活效果 */
+    .stButton > button[kind="primary"]:active,
+    .stButton > button[type="primary"]:active,
+    button[kind="primary"]:active,
+    button[type="primary"]:active {
+        background-color: #558b2f !important;
+        border-color: #558b2f !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
     st.set_page_config(
         page_title="智能知识库系统 (DeepSeek版)",
         page_icon="📚",
@@ -1924,6 +2222,13 @@ def main():
         # 文件夹选择
         folder_path = st.text_input("文件夹路径", placeholder="输入文件夹路径，如: ./documents")
         
+        # 在列布局外创建占位符，确保与输入框等宽
+        info_placeholder = st.empty()
+        progress_placeholder = st.empty()
+        status_placeholder = st.empty()
+        success_placeholder = st.empty()  # 用于显示成功消息，确保等宽
+        error_placeholder = st.empty()  # 用于显示错误消息，确保等宽
+        
         col1, col2 = st.columns(2)
         with col1:
             # 检查是否正在创建向量数据库
@@ -1935,18 +2240,22 @@ def main():
                         st.session_state.docs = process_folder(folder_path)
                         # 保存当前文件夹路径
                         st.session_state.current_folder_path = folder_path
-                    st.success(f"已加载 {len(st.session_state.docs)} 个文件")
+                    
+                    # 显示已加载文件信息（在列布局外，确保与输入框等宽）
+                    if st.session_state.docs:
+                        info_placeholder.info(f"📄 已加载 {len(st.session_state.docs)} 个文件")
                     
                     # 检查并加载/创建向量数据库
                     if st.session_state.docs:
                         st.session_state.is_creating_vectorstore = True
-                        progress_bar = st.progress(0)
-                        status_text = st.empty()
+                        # 进度条和状态文本（在列布局外，确保与输入框等宽）
+                        progress_bar = progress_placeholder.progress(0)
+                        status_text = status_placeholder.empty()
                         
                         try:
                             # 首先尝试加载已有向量数据库
                             status_text.text("🔄 正在检查已有向量数据库...")
-                            progress_bar.progress(5)
+                            progress_bar.progress(0.05)
                             
                             existing_vectorstore = load_existing_vector_store(
                                 folder_path=folder_path,
@@ -1959,67 +2268,59 @@ def main():
                             # 检查文档是否变化
                             docs_changed = check_docs_changed(st.session_state.docs, folder_path)
                             
-                            # 安全地检查向量数据库是否可用（避免索引损坏导致的错误）
-                            vectorstore_usable = False
-                            if existing_vectorstore:
-                                try:
-                                    # 尝试访问向量数据库，如果索引损坏会在这里失败
-                                    _ = len(existing_vectorstore)
-                                    vectorstore_usable = True
-                                except Exception as e:
-                                    # 向量数据库索引可能损坏，需要重新创建
-                                    vectorstore_usable = False
-                                    status_text.text("⚠️ 检测到向量数据库索引损坏，将重新创建...")
-                                    progress_bar.progress(0.1)
-                            
-                            if vectorstore_usable and not docs_changed:
+                            # 如果 load_existing_vector_store 返回了 vectorstore，说明数据库可用
+                            # 不需要再次验证，避免重复验证导致的问题
+                            if existing_vectorstore and not docs_changed:
                                 # 文档未变化，使用已有向量数据库
                                 st.session_state.vectorstore = existing_vectorstore
-                                progress_bar.progress(100)
+                                progress_bar.progress(1.0)
                                 status_text.text("✅ 已加载已有向量数据库！")
-                                st.success("✅ 已加载已有向量数据库（文档未变化）")
+                                success_placeholder.success("✅ 已加载已有向量数据库（文档未变化）")
                             else:
                                 # 文档变化或不存在，需要重新创建
+                                # 移除所有硬编码的进度更新，让 create_local_vector_store 完全控制进度
+                                # 这样进度条会一直往前走，不会回退
                                 if existing_vectorstore and docs_changed:
                                     status_text.text("📝 检测到文档变化，正在重新创建向量数据库...")
-                                    progress_bar.progress(10)
+                                    progress_bar.progress(0.01)
                                 
-                                status_text.text("🔄 步骤 1/4: 准备文本内容...")
-                                progress_bar.progress(10)
-                                
-                                status_text.text("🔄 步骤 2/4: 分割文本...")
-                                progress_bar.progress(30)
-                                
-                                status_text.text("🔄 步骤 3/4: 生成向量嵌入（这可能需要几分钟）...")
-                                progress_bar.progress(50)
-                                
-                                st.session_state.vectorstore = create_local_vector_store(
-                                    st.session_state.docs,
-                                    folder_path=folder_path,
-                                    progress_callback=lambda p, msg: (
-                                        progress_bar.progress(p / 100.0),
-                                        status_text.text(msg)
+                                # 直接调用 create_local_vector_store，让它自己管理所有进度更新
+                                try:
+                                    st.session_state.vectorstore = create_local_vector_store(
+                                        st.session_state.docs,
+                                        folder_path=folder_path,
+                                        progress_callback=lambda p, msg: (
+                                            progress_bar.progress(p / 100.0),
+                                            status_text.text(msg)
+                                        )
                                     )
-                                )
-                                
-                                progress_bar.progress(90)
-                                status_text.text("🔄 步骤 4/4: 保存向量数据库...")
-                                
-                                if st.session_state.vectorstore:
-                                    progress_bar.progress(100)
-                                    status_text.text("✅ 向量数据库创建完成！")
-                                    st.success("✅ 向量数据库创建完成！")
-                                else:
-                                    progress_bar.empty()
-                                    status_text.empty()
-                                    # 如果创建失败，已经在 create_local_vector_store 中显示了警告
+                                    
+                                    if st.session_state.vectorstore:
+                                        progress_bar.progress(1.0)
+                                        status_text.text("✅ 向量数据库创建完成！")
+                                        success_placeholder.success("✅ 向量数据库创建完成！")
+                                        error_placeholder.empty()  # 清空错误提示
+                                    else:
+                                        progress_placeholder.empty()
+                                        status_placeholder.empty()
+                                        # 如果创建失败，已经在 create_local_vector_store 中显示了警告
+                                except Exception as create_error:
+                                    # 捕获异常，使用占位符显示错误（确保等宽）
+                                    progress_placeholder.empty()
+                                    status_placeholder.empty()
+                                    error_type = type(create_error).__name__
+                                    error_msg = str(create_error)
+                                    error_placeholder.error(f"⚠️ **向量数据库创建失败**\n\n"
+                                                          f"**错误类型**: `{error_type}`\n\n"
+                                                          f"**错误信息**: {error_msg}")
+                                    st.session_state.vectorstore = None
                         finally:
                             st.session_state.is_creating_vectorstore = False
                             # 清理进度条
                             import time
                             time.sleep(0.5)
-                            progress_bar.empty()
-                            status_text.empty()
+                            progress_placeholder.empty()
+                            status_placeholder.empty()
                 else:
                     st.error("请输入有效的文件夹路径")
         
@@ -2028,7 +2329,15 @@ def main():
                 st.session_state.docs = {}
                 st.session_state.vectorstore = None
                 st.session_state.is_creating_vectorstore = False
+                info_placeholder.empty()
+                progress_placeholder.empty()
+                status_placeholder.empty()
+                success_placeholder.empty()
                 st.rerun()
+        
+        # 如果不在创建过程中，显示已加载文件信息
+        if st.session_state.get('docs') and not is_creating_vectorstore:
+            info_placeholder.info(f"📄 已加载 {len(st.session_state.docs)} 个文件")
         
         # 文件上传
         st.subheader("或上传文件")
@@ -2038,6 +2347,13 @@ def main():
             accept_multiple_files=True,
             label_visibility="collapsed"
         )
+        
+        # 在文件上传区域创建占位符，确保与上传组件等宽
+        upload_info_placeholder = st.empty()
+        upload_progress_placeholder = st.empty()
+        upload_status_placeholder = st.empty()
+        upload_success_placeholder = st.empty()  # 用于显示成功消息，确保等宽
+        upload_error_placeholder = st.empty()  # 用于显示错误消息，确保等宽
         
         if uploaded_files and st.button("上传文件"):
             temp_dir = tempfile.mkdtemp()
@@ -2077,18 +2393,21 @@ def main():
                 except Exception as e:
                     st.error(f"读取文件 {filename} 失败: {str(e)}")
             
-            st.success(f"已上传 {len(uploaded_files)} 个文件")
+            # 显示已上传文件信息（在占位符中，确保与上传组件等宽）
+            if uploaded_files:
+                upload_info_placeholder.info(f"📄 已上传 {len(uploaded_files)} 个文件")
             
             # 检查并加载/创建向量数据库（上传文件时 folder_path 为 None）
             if st.session_state.docs:
                 st.session_state.is_creating_vectorstore = True
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+                # 进度条和状态文本（在占位符中，确保与上传组件等宽）
+                progress_bar = upload_progress_placeholder.progress(0)
+                status_text = upload_status_placeholder.empty()
                 
                 try:
                     # 首先尝试加载已有向量数据库
                     status_text.text("🔄 正在检查已有向量数据库...")
-                    progress_bar.progress(5)
+                    progress_bar.progress(0.05)
                     
                     existing_vectorstore = load_existing_vector_store(
                         folder_path=None,  # 上传文件时没有文件夹路径
@@ -2101,63 +2420,61 @@ def main():
                     # 检查文档是否变化
                     docs_changed = check_docs_changed(st.session_state.docs, None)
                     
-                    # 安全地检查向量数据库是否可用
-                    vectorstore_usable = False
-                    if existing_vectorstore:
-                        try:
-                            _ = len(existing_vectorstore)
-                            vectorstore_usable = True
-                        except Exception as e:
-                            vectorstore_usable = False
-                            status_text.text("⚠️ 检测到向量数据库索引损坏，将重新创建...")
-                            progress_bar.progress(0.1)
-                    
-                    if vectorstore_usable and not docs_changed:
+                    # 如果 load_existing_vector_store 返回了 vectorstore，说明数据库可用
+                    # 不需要再次验证，避免重复验证导致的问题
+                    if existing_vectorstore and not docs_changed:
                         # 文档未变化，使用已有向量数据库
                         st.session_state.vectorstore = existing_vectorstore
-                        progress_bar.progress(100)
+                        progress_bar.progress(1.0)
                         status_text.text("✅ 已加载已有向量数据库！")
-                        st.success("✅ 已加载已有向量数据库（文档未变化）")
+                        upload_success_placeholder.success("✅ 已加载已有向量数据库（文档未变化）")
                     else:
                         # 文档变化或不存在，需要重新创建
+                        # 移除所有硬编码的进度更新，让 create_local_vector_store 完全控制进度
                         if existing_vectorstore and docs_changed:
                             status_text.text("📝 检测到文档变化，正在重新创建向量数据库...")
-                            progress_bar.progress(10)
+                            progress_bar.progress(0.01)
                         
-                        status_text.text("🔄 步骤 1/4: 准备文本内容...")
-                        progress_bar.progress(10)
-                        
-                        status_text.text("🔄 步骤 2/4: 分割文本...")
-                        progress_bar.progress(30)
-                        
-                        status_text.text("🔄 步骤 3/4: 生成向量嵌入（这可能需要几分钟）...")
-                        progress_bar.progress(50)
-                        
-                        st.session_state.vectorstore = create_local_vector_store(
-                            st.session_state.docs,
-                            folder_path=None,  # 上传文件时没有文件夹路径
-                            progress_callback=lambda p, msg: (
-                                progress_bar.progress(p / 100.0),
-                                status_text.text(msg)
+                        # 直接调用 create_local_vector_store，让它自己管理所有进度更新
+                        try:
+                            st.session_state.vectorstore = create_local_vector_store(
+                                st.session_state.docs,
+                                folder_path=None,  # 上传文件时没有文件夹路径
+                                progress_callback=lambda p, msg: (
+                                    progress_bar.progress(p / 100.0),
+                                    status_text.text(msg)
+                                )
                             )
-                        )
-                        
-                        progress_bar.progress(90)
-                        status_text.text("🔄 步骤 4/4: 保存向量数据库...")
-                    
-                    if st.session_state.vectorstore:
-                        progress_bar.progress(100)
-                        status_text.text("✅ 向量数据库更新完成！")
-                        st.success("✅ 向量数据库更新完成！")
-                    else:
-                        progress_bar.empty()
-                        status_text.empty()
+                            
+                            if st.session_state.vectorstore:
+                                progress_bar.progress(1.0)
+                                status_text.text("✅ 向量数据库更新完成！")
+                                upload_success_placeholder.success("✅ 向量数据库更新完成！")
+                                upload_error_placeholder.empty()  # 清空错误提示
+                            else:
+                                upload_progress_placeholder.empty()
+                                upload_status_placeholder.empty()
+                        except Exception as create_error:
+                            # 捕获异常，使用占位符显示错误（确保等宽）
+                            upload_progress_placeholder.empty()
+                            upload_status_placeholder.empty()
+                            error_msg = str(create_error)
+                            upload_error_placeholder.error(error_msg)
+                            st.session_state.vectorstore = None
                 finally:
                     st.session_state.is_creating_vectorstore = False
                     import time
                     time.sleep(0.5)
-                    progress_bar.empty()
-                    status_text.empty()
+                    upload_progress_placeholder.empty()
+                    upload_status_placeholder.empty()
+        
+        # 如果不在创建过程中，显示已上传文件信息
+        if st.session_state.get('docs') and not st.session_state.get('is_creating_vectorstore', False) and uploaded_files:
+            upload_info_placeholder.info(f"📄 已上传 {len(uploaded_files)} 个文件")
+        
+        # 如果不在创建过程中，显示已上传文件信息
+        if st.session_state.get('docs') and not st.session_state.get('is_creating_vectorstore', False) and uploaded_files:
+            upload_info_placeholder.info(f"📄 已上传 {len(uploaded_files)} 个文件")
         
         # 文件统计
         if st.session_state.docs:
@@ -2662,9 +2979,9 @@ def main():
                             except Exception as e:
                                 st.error(f"保存失败: {str(e)}")
                     
-                    # 如果答案包含错误信息，提供解决建议
+                    # 如果答案包含错误信息，提供解决建议（不自动展开）
                     if "超时" in answer or "连接" in answer or "网络" in answer:
-                        with st.expander("💡 网络问题解决建议", expanded=True):
+                        with st.expander("💡 网络问题解决建议", expanded=False):
                             st.markdown("""
                             **如果遇到超时或连接问题，可以尝试：**
                             1. 📈 **增加超时时间**：在侧边栏"高级设置"中增加超时时间（建议120-180秒）
