@@ -12,6 +12,262 @@ import hashlib
 # API Key 管理模块
 CONFIG_FILE = os.path.join(".", ".deepseek_config.json")
 
+# Prompt 模版管理模块
+PROMPT_TEMPLATES_DIR = os.path.join(".", "prompt_templates")
+SUMMARY_TEMPLATES_FILE = os.path.join(PROMPT_TEMPLATES_DIR, "summary_templates.json")
+ANALYSIS_TEMPLATES_FILE = os.path.join(PROMPT_TEMPLATES_DIR, "analysis_templates.json")
+
+def ensure_templates_dir():
+    """确保模版目录存在"""
+    os.makedirs(PROMPT_TEMPLATES_DIR, exist_ok=True)
+
+def get_default_summary_templates() -> Dict[str, Dict[str, Any]]:
+    """获取默认的总结模版"""
+    return {
+        "default": {
+            "name": "默认总结模版",
+            "description": "标准的多部分总结报告",
+            "template": """请根据以下文档内容，生成一份详细的总结报告：
+
+文档内容：
+{content}
+
+请生成包括以下部分的报告：
+1. 整体内容概述
+2. 核心要点总结
+3. 关键数据/信息提取
+4. 主要发现和洞察
+5. 建议和下一步行动
+
+报告：""",
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        },
+        "brief": {
+            "name": "简要总结模版",
+            "description": "简洁的要点总结",
+            "template": """请根据以下文档内容，生成一份简要总结：
+
+文档内容：
+{content}
+
+请提供：
+1. 核心要点（3-5条）
+2. 关键信息
+3. 主要结论
+
+总结：""",
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        },
+        "detailed": {
+            "name": "详细分析模版",
+            "description": "深入分析文档内容",
+            "template": """请对以下文档内容进行深入分析：
+
+文档内容：
+{content}
+
+请提供详细分析：
+1. 文档背景和目的
+2. 主要内容结构
+3. 关键数据和事实
+4. 深度洞察和分析
+5. 潜在问题和风险
+6. 改进建议和行动计划
+
+分析报告：""",
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+    }
+
+def get_default_analysis_templates() -> Dict[str, Dict[str, Any]]:
+    """获取默认的数据分析模版"""
+    return {
+        "default": {
+            "name": "默认分析模版",
+            "description": "标准的数据分析报告",
+            "template": """请分析以下文档集合，提供数据分析:
+
+文档信息：
+{doc_info}
+
+请提供：
+1. 文档内容分布分析
+2. 潜在的数据模式和趋势
+3. 建议的数据可视化方式
+
+分析结果：""",
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        },
+        "statistical": {
+            "name": "统计分析模版",
+            "description": "侧重于统计数据分析",
+            "template": """请对以下文档集合进行统计分析:
+
+文档信息：
+{doc_info}
+
+请提供：
+1. 文档数量、大小、类型分布统计
+2. 内容关键词频率分析
+3. 文档间关联性分析
+4. 数据质量评估
+5. 统计图表建议
+
+统计分析：""",
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        },
+        "trend": {
+            "name": "趋势分析模版",
+            "description": "侧重于趋势和模式识别",
+            "template": """请分析以下文档集合中的趋势和模式:
+
+文档信息：
+{doc_info}
+
+请提供：
+1. 内容趋势识别
+2. 时间序列模式（如有）
+3. 主题演变趋势
+4. 异常模式检测
+5. 未来趋势预测
+
+趋势分析：""",
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+    }
+
+def load_templates(template_type: str) -> Dict[str, Dict[str, Any]]:
+    """加载模版（总结或分析）
+    
+    Args:
+        template_type: 'summary' 或 'analysis'
+    
+    Returns:
+        模版字典
+    """
+    ensure_templates_dir()
+    
+    if template_type == "summary":
+        file_path = SUMMARY_TEMPLATES_FILE
+        default_templates = get_default_summary_templates()
+    elif template_type == "analysis":
+        file_path = ANALYSIS_TEMPLATES_FILE
+        default_templates = get_default_analysis_templates()
+    else:
+        return {}
+    
+    try:
+        if os.path.exists(file_path):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                templates = json.load(f)
+                # 合并默认模版（如果用户模版中没有）
+                for key, default_template in default_templates.items():
+                    if key not in templates:
+                        templates[key] = default_template
+                return templates
+        else:
+            # 如果文件不存在，创建默认模版文件
+            save_templates(template_type, default_templates)
+            return default_templates
+    except Exception:
+        # 如果加载失败，返回默认模版
+        return default_templates
+
+def save_templates(template_type: str, templates: Dict[str, Dict[str, Any]]) -> bool:
+    """保存模版
+    
+    Args:
+        template_type: 'summary' 或 'analysis'
+        templates: 模版字典
+    
+    Returns:
+        是否保存成功
+    """
+    ensure_templates_dir()
+    
+    if template_type == "summary":
+        file_path = SUMMARY_TEMPLATES_FILE
+    elif template_type == "analysis":
+        file_path = ANALYSIS_TEMPLATES_FILE
+    else:
+        return False
+    
+    try:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(templates, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        if 'st' in globals():
+            st.error(f"保存模版失败: {str(e)}")
+        return False
+
+def save_template(template_type: str, template_id: str, name: str, description: str, template: str) -> bool:
+    """保存单个模版
+    
+    Args:
+        template_type: 'summary' 或 'analysis'
+        template_id: 模版ID（如果已存在则更新，否则创建）
+        name: 模版名称
+        description: 模版描述
+        template: 模版内容
+    
+    Returns:
+        是否保存成功
+    """
+    templates = load_templates(template_type)
+    
+    # 生成ID（如果未提供或已存在）
+    if not template_id or template_id in templates:
+        # 使用名称生成ID（移除特殊字符）
+        template_id = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in name.lower())
+        # 确保唯一性
+        counter = 1
+        original_id = template_id
+        while template_id in templates:
+            template_id = f"{original_id}_{counter}"
+            counter += 1
+    
+    templates[template_id] = {
+        "name": name,
+        "description": description,
+        "template": template,
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    
+    return save_templates(template_type, templates)
+
+def delete_template(template_type: str, template_id: str) -> bool:
+    """删除模版
+    
+    Args:
+        template_type: 'summary' 或 'analysis'
+        template_id: 模版ID
+    
+    Returns:
+        是否删除成功
+    """
+    templates = load_templates(template_type)
+    
+    if template_id in templates:
+        del templates[template_id]
+        return save_templates(template_type, templates)
+    
+    return False
+
+def get_template(template_type: str, template_id: str) -> Optional[Dict[str, Any]]:
+    """获取单个模版
+    
+    Args:
+        template_type: 'summary' 或 'analysis'
+        template_id: 模版ID
+    
+    Returns:
+        模版字典，如果不存在则返回None
+    """
+    templates = load_templates(template_type)
+    return templates.get(template_id)
+
 def encode_api_key(api_key: str) -> str:
     """简单的编码（Base64），不是真正的加密，但可以避免完全明文"""
     if not api_key:
@@ -245,19 +501,27 @@ def check_db_corrupted(db_path: str) -> bool:
         return False  # 数据库正常
     except Exception as e:
         error_msg = str(e).lower()
-        # 检测常见的数据库错误
+        # 只检测真正表示数据库损坏的关键错误信息
+        # 避免过于宽泛的匹配，防止误判正常错误
         is_corrupted = (
+            # Schema 相关错误（版本兼容性问题）
             "no such column" in error_msg or
             "collections.topic" in error_msg or
-            "hnsw" in error_msg or
-            "index" in error_msg or
-            "compaction" in error_msg or
-            "segment" in error_msg or
-            "schema" in error_msg or
-            "sqlite" in error_msg
+            ("schema" in error_msg and ("mismatch" in error_msg or "invalid" in error_msg or "version" in error_msg)) or
+            # HNSW 索引损坏（明确的错误信息）
+            ("hnsw" in error_msg and ("corrupt" in error_msg or "invalid" in error_msg or "damaged" in error_msg)) or
+            # 索引文件损坏（明确的错误信息）
+            ("index" in error_msg and ("corrupt" in error_msg or "invalid" in error_msg or "damaged" in error_msg or "missing" in error_msg)) or
+            # SQLite 数据库文件损坏（明确的错误信息）
+            ("sqlite" in error_msg and ("corrupt" in error_msg or "database disk image is malformed" in error_msg or "file is encrypted" in error_msg)) or
+            # 段文件损坏
+            ("segment" in error_msg and ("corrupt" in error_msg or "invalid" in error_msg or "damaged" in error_msg))
         )
         if is_corrupted:
             print(f"⚠️ 检测到数据库损坏: {str(e)}")
+        else:
+            # 记录非损坏性错误（用于调试）
+            print(f"ℹ️ 数据库加载时出现非损坏性错误（将忽略）: {str(e)}")
         return is_corrupted
 
 def cleanup_corrupted_db(db_path: str, force: bool = True):
@@ -664,47 +928,31 @@ def create_local_vector_store(docs_dict: Dict[str, Any], progress_callback=None,
         if not os.access(parent_dir, os.W_OK):
             raise PermissionError(f"没有写入权限: {parent_dir}")
         
-        # 如果数据库目录已存在，先检测是否损坏，然后清理（避免版本兼容性问题）
+        # 如果数据库目录已存在，先检测是否损坏
+        # 注意：此函数只在文档变化或数据库不存在时被调用
+        # 如果数据库存在且正常，调用者应该已经检查过文档变化
         if os.path.exists(db_path):
             if progress_callback:
                 progress_callback(5, "🔄 检测向量数据库状态...")
             
-            # 先检测数据库是否损坏（特别是 schema 兼容性问题）
+            # 检测数据库是否损坏（特别是 schema 兼容性问题）
             is_corrupted = check_db_corrupted(db_path)
             
             if is_corrupted:
+                # 数据库损坏，需要清理后重新创建
                 if progress_callback:
                     progress_callback(5, "⚠️ 检测到数据库损坏（可能是版本兼容性问题），正在清理...")
                 cleanup_corrupted_db(db_path, force=True)
                 import time
                 time.sleep(1)  # 等待文件系统更新
             else:
-                # 即使检测正常，如果文档变化了，也需要清理重建
-                # 这里先不清理，让后续逻辑处理
-                pass
-        
-        # 确保损坏的目录被清理
-        if os.path.exists(db_path):
-            # 再次尝试清理（防止检测遗漏）
-            try:
-                # 快速检测：如果目录存在但很小或结构异常，可能是损坏的
-                import time
+                # 数据库正常，但由于文档变化需要重新创建，清理旧数据库
+                # 注意：调用者应该已经检查过文档变化，这里直接清理即可
                 if progress_callback:
-                    progress_callback(5, "🔄 清理旧的向量数据库目录...")
+                    progress_callback(5, "📝 检测到文档变化，清理旧向量数据库...")
                 cleanup_corrupted_db(db_path, force=True)
+                import time
                 time.sleep(0.5)  # 等待文件系统更新
-            except Exception:
-                pass
-        
-        # 如果仍然存在，尝试重命名（最后的手段）
-        if os.path.exists(db_path):
-            import time
-            backup_name = db_path + "_backup_" + str(int(time.time()))
-            try:
-                os.rename(db_path, backup_name)
-                print(f"⚠️ 无法删除目录，已重命名为备份: {backup_name}")
-            except Exception:
-                pass
         
         # 提取文本内容
         if progress_callback:
@@ -785,30 +1033,21 @@ def create_local_vector_store(docs_dict: Dict[str, Any], progress_callback=None,
         if progress_callback:
             progress_callback(85, "🔄 步骤 4/4: 创建向量存储...")
         
-        # 确保使用全新的目录（如果目录仍然存在，再次清理）
-        if os.path.exists(db_path):
-            # 最后一次清理尝试
-            cleanup_corrupted_db(db_path, force=True)
-            import time
-            time.sleep(0.5)
-        
-        # 确保目录不存在后再创建
+        # 确保目录不存在后再创建（之前的清理应该已经删除了目录）
         if not os.path.exists(db_path):
             os.makedirs(db_path, exist_ok=True)
         else:
-            # 如果仍然存在，尝试重命名
+            # 如果目录仍然存在（清理失败），尝试重命名作为备份
             import time
             backup_name = db_path + "_backup_" + str(int(time.time()))
             try:
                 os.rename(db_path, backup_name)
                 print(f"⚠️ 无法删除目录，已重命名为备份: {backup_name}")
                 os.makedirs(db_path, exist_ok=True)
-            except Exception:
-                # 如果重命名也失败，尝试强制删除
-                cleanup_corrupted_db(db_path, force=True)
-                time.sleep(0.5)
-                if not os.path.exists(db_path):
-                    os.makedirs(db_path, exist_ok=True)
+            except Exception as rename_error:
+                # 如果重命名也失败，记录错误但继续尝试创建（ChromaDB可能会处理）
+                print(f"⚠️ 无法重命名目录: {str(rename_error)}")
+                # 不强制删除，让ChromaDB尝试处理现有目录
         
         # 兼容不同版本的参数名
         max_retries = 3  # 增加重试次数
@@ -1132,8 +1371,15 @@ def answer_with_deepseek(question: str, vectorstore, docs_dict: Dict[str, Any], 
 
     return query_deepseek(prompt, api_key)
 
-def generate_summary_deepseek(docs_dict: Dict[str, Any], api_key: str, specific_files: List[str] = None):
-    """使用DeepSeek生成总结报告"""
+def generate_summary_deepseek(docs_dict: Dict[str, Any], api_key: str, specific_files: List[str] = None, template_id: str = "default"):
+    """使用DeepSeek生成总结报告
+    
+    Args:
+        docs_dict: 文档字典
+        api_key: API密钥
+        specific_files: 特定文件列表（None表示所有文件）
+        template_id: 使用的模版ID（默认为"default"）
+    """
     # 提取内容
     contents = []
     if specific_files:
@@ -1152,8 +1398,15 @@ def generate_summary_deepseek(docs_dict: Dict[str, Any], api_key: str, specific_
     
     combined_content = "\n\n".join(contents)
     
-    # 构建提示
-    prompt = f"""请根据以下文档内容，生成一份详细的总结报告：
+    # 加载模版
+    template_data = get_template("summary", template_id)
+    if template_data:
+        template_str = template_data.get("template", "")
+        # 替换模版中的占位符
+        prompt = template_str.format(content=combined_content[:12000])
+    else:
+        # 如果模版不存在，使用默认模版
+        prompt = f"""请根据以下文档内容，生成一份详细的总结报告：
 
 文档内容：
 {combined_content[:12000]}
@@ -1727,6 +1980,73 @@ def main():
                 summary_button_disabled = False
                 st.info(f"📚 将总结所有 {len(st.session_state.docs)} 个文档")
             
+            # Prompt模版选择和管理
+            # 加载模版列表
+            summary_templates = load_templates("summary")
+            template_options = {f"{t['name']} ({tid})": tid for tid, t in summary_templates.items()}
+            
+            # 初始化session state
+            if 'selected_summary_template' not in st.session_state:
+                st.session_state.selected_summary_template = "default"
+            
+            col_template1, col_template2, col_template3 = st.columns([4, 1, 1])
+            with col_template1:
+                selected_template_display = st.selectbox(
+                    "选择Prompt模版",
+                    options=list(template_options.keys()),
+                    index=list(template_options.values()).index(st.session_state.selected_summary_template) if st.session_state.selected_summary_template in template_options.values() else 0,
+                    help="选择用于生成总结的Prompt模版"
+                )
+                st.session_state.selected_summary_template = template_options[selected_template_display]
+            
+            with col_template2:
+                # 添加占位符以对齐selectbox的label和help icon
+                st.markdown("<div style='height: 27px;'></div>", unsafe_allow_html=True)
+                if st.button("👁️ 预览", use_container_width=True, key="preview_summary_template_btn"):
+                    st.session_state.show_summary_template_preview = True
+            
+            with col_template3:
+                # 添加占位符以对齐selectbox的label和help icon
+                st.markdown("<div style='height: 27px;'></div>", unsafe_allow_html=True)
+                # 检查选中的模版是否可以删除（默认模版不可删除）
+                can_delete = st.session_state.selected_summary_template != "default"
+                if st.button("🗑️ 删除", use_container_width=True, key="delete_summary_template_btn", disabled=not can_delete):
+                    if delete_template("summary", st.session_state.selected_summary_template):
+                        st.success("✅ 模版已删除")
+                        st.session_state.selected_summary_template = "default"
+                        st.rerun()
+            
+            # 模版预览
+            if st.session_state.get('show_summary_template_preview', False):
+                template_data = get_template("summary", st.session_state.selected_summary_template)
+                if template_data:
+                    with st.expander("📋 模版预览", expanded=True):
+                        st.markdown(f"**模版名称**: {template_data.get('name', '')}")
+                        st.markdown(f"**模版描述**: {template_data.get('description', '')}")
+                        st.markdown("**模版内容**:")
+                        st.code(template_data.get('template', ''), language='text')
+                        if st.button("关闭预览", key="close_preview_summary"):
+                            st.session_state.show_summary_template_preview = False
+            
+            # 模版管理（仅保留创建/编辑功能）
+            with st.expander("⚙️ 模版管理", expanded=False):
+                st.markdown("**创建/编辑模版**")
+                new_template_name = st.text_input("模版名称", key="new_summary_template_name")
+                new_template_desc = st.text_input("模版描述", key="new_summary_template_desc")
+                new_template_content = st.text_area(
+                    "模版内容（使用 {content} 作为文档内容占位符）",
+                    height=200,
+                    key="new_summary_template_content",
+                    help="示例：请根据以下文档内容，生成总结：\n\n文档内容：\n{content}\n\n总结："
+                )
+                if st.button("💾 保存模版", key="save_summary_template"):
+                    if new_template_name and new_template_content:
+                        if save_template("summary", "", new_template_name, new_template_desc, new_template_content):
+                            st.success("✅ 模版已保存")
+                            st.rerun()
+                    else:
+                        st.warning("请输入模版名称和内容")
+            
             # 生成报告按钮
             generate_summary_clicked = st.button(
                 "生成知识库总结报告", 
@@ -1747,15 +2067,24 @@ def main():
                         files_to_summarize = selected_files_for_summary
                         summary_title = f"选定文档总结（共 {len(selected_files_for_summary)} 个文档）"
                     
+                    # 获取选中的模版名称用于显示
+                    selected_template_data = get_template("summary", st.session_state.selected_summary_template)
+                    template_name = selected_template_data.get('name', '默认模版') if selected_template_data else '默认模版'
+                    summary_title += f" - {template_name}"
+                    
                     with st.spinner(f"正在生成总结报告（{summary_title}）..."):
                         summary = generate_summary_deepseek(
                             st.session_state.docs, 
                             api_key,
-                            specific_files=files_to_summarize
+                            specific_files=files_to_summarize,
+                            template_id=st.session_state.selected_summary_template
                         )
+                        # 生成时间戳（在生成总结时生成，确保同一总结使用相同时间戳）
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                         # 保存到 session state
                         st.session_state.summary = summary
                         st.session_state.summary_title = summary_title
+                        st.session_state.summary_timestamp = timestamp  # 保存时间戳
                         # 保存文档列表信息用于后续显示
                         if files_to_summarize:
                             st.session_state.summary_files = files_to_summarize
@@ -1783,7 +2112,8 @@ def main():
                 st.markdown("#### 💾 保存报告")
                 col_save1, col_save2, col_save3 = st.columns(3)
                 
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                # 使用生成总结时保存的时间戳，如果没有则生成新的（兼容旧代码）
+                timestamp = st.session_state.get('summary_timestamp', datetime.now().strftime("%Y%m%d_%H%M%S"))
                 
                 # 确定文档列表用于保存
                 summary_files = st.session_state.get('summary_files', None)
@@ -1839,17 +2169,22 @@ def main():
                 
                 if st.checkbox("💾 同时自动保存到本地", value=False, key="auto_save_summary"):
                     try:
-                        # 保存TXT版本
+                        # 保存TXT版本（如果文件已存在则覆盖）
                         txt_path = os.path.join(save_dir, f"知识库总结_{timestamp}.txt")
                         with open(txt_path, 'w', encoding='utf-8') as f:
                             f.write(st.session_state.summary)
                         
-                        # 保存Markdown版本
+                        # 保存Markdown版本（如果文件已存在则覆盖）
                         md_path = os.path.join(save_dir, f"知识库总结_{timestamp}.md")
                         with open(md_path, 'w', encoding='utf-8') as f:
                             f.write(md_summary)
                         
-                        st.success(f"✅ 报告已保存到: {save_dir}")
+                        # 检查文件是否已存在（用于提示用户）
+                        file_existed = os.path.exists(txt_path) or os.path.exists(md_path)
+                        if file_existed:
+                            st.success(f"✅ 报告已更新到: {save_dir}（已覆盖同名文件）")
+                        else:
+                            st.success(f"✅ 报告已保存到: {save_dir}")
                         st.info(f"📁 文件路径:\n- {txt_path}\n- {md_path}")
                     except Exception as e:
                         st.error(f"保存失败: {str(e)}")
@@ -2020,20 +2355,111 @@ def main():
             elif not api_key:
                 st.error("请输入DeepSeek API密钥")
             else:
-                with st.spinner("正在分析文档..."):
-                    prompt = f"""请分析以下文档集合，提供数据分析:
+                # 在弹窗中显示模版选择和管理
+                with st.expander("📝 数据分析配置", expanded=True):
+                    # 初始化session state
+                    if 'selected_analysis_template' not in st.session_state:
+                        st.session_state.selected_analysis_template = "default"
+                    
+                    # 加载模版列表
+                    analysis_templates = load_templates("analysis")
+                    analysis_template_options = {f"{t['name']} ({tid})": tid for tid, t in analysis_templates.items()}
+                    
+                    col_analysis_template1, col_analysis_template2, col_analysis_template3 = st.columns([4, 1, 1])
+                    with col_analysis_template1:
+                        selected_analysis_template_display = st.selectbox(
+                            "选择Prompt模版",
+                            options=list(analysis_template_options.keys()),
+                            index=list(analysis_template_options.values()).index(st.session_state.selected_analysis_template) if st.session_state.selected_analysis_template in analysis_template_options.values() else 0,
+                            help="选择用于数据分析的Prompt模版",
+                            key="analysis_template_select"
+                        )
+                        st.session_state.selected_analysis_template = analysis_template_options[selected_analysis_template_display]
+                    
+                    with col_analysis_template2:
+                        # 添加占位符以对齐selectbox的label和help icon
+                        st.markdown("<div style='height: 27px;'></div>", unsafe_allow_html=True)
+                        if st.button("👁️ 预览", use_container_width=True, key="preview_analysis_template"):
+                            st.session_state.show_analysis_template_preview = True
+                    
+                    with col_analysis_template3:
+                        # 添加占位符以对齐selectbox的label和help icon
+                        st.markdown("<div style='height: 27px;'></div>", unsafe_allow_html=True)
+                        # 检查选中的模版是否可以删除（默认模版不可删除）
+                        can_delete_analysis = st.session_state.selected_analysis_template != "default"
+                        if st.button("🗑️ 删除", use_container_width=True, key="delete_analysis_template_btn", disabled=not can_delete_analysis):
+                            if delete_template("analysis", st.session_state.selected_analysis_template):
+                                st.success("✅ 模版已删除")
+                                st.session_state.selected_analysis_template = "default"
+                                st.rerun()
+                    
+                    # 模版预览
+                    if st.session_state.get('show_analysis_template_preview', False):
+                        template_data = get_template("analysis", st.session_state.selected_analysis_template)
+                        if template_data:
+                            st.markdown("**模版预览**")
+                            st.markdown(f"**模版名称**: {template_data.get('name', '')}")
+                            st.markdown(f"**模版描述**: {template_data.get('description', '')}")
+                            st.markdown("**模版内容**:")
+                            st.code(template_data.get('template', ''), language='text')
+                            if st.button("关闭预览", key="close_preview_analysis"):
+                                st.session_state.show_analysis_template_preview = False
+                    
+                    # 模版管理（仅保留创建/编辑功能）
+                    with st.expander("⚙️ 模版管理", expanded=False):
+                        st.markdown("**创建/编辑模版**")
+                        new_analysis_template_name = st.text_input("模版名称", key="new_analysis_template_name")
+                        new_analysis_template_desc = st.text_input("模版描述", key="new_analysis_template_desc")
+                        new_analysis_template_content = st.text_area(
+                            "模版内容（使用 {doc_info} 作为文档信息占位符）",
+                            height=200,
+                            key="new_analysis_template_content",
+                            help="示例：请分析以下文档集合：\n\n文档信息：\n{doc_info}\n\n分析："
+                        )
+                        if st.button("💾 保存模版", key="save_analysis_template"):
+                            if new_analysis_template_name and new_analysis_template_content:
+                                if save_template("analysis", "", new_analysis_template_name, new_analysis_template_desc, new_analysis_template_content):
+                                    st.success("✅ 模版已保存")
+                                    st.rerun()
+                            else:
+                                st.warning("请输入模版名称和内容")
+                    
+                    # 执行分析按钮
+                    run_analysis_clicked = st.button("🚀 执行数据分析", type="primary", use_container_width=True, key="run_analysis_btn")
+                    
+                    if run_analysis_clicked:
+                        with st.spinner("正在分析文档..."):
+                            # 加载选中的模版
+                            template_data = get_template("analysis", st.session_state.selected_analysis_template)
+                            
+                            # 准备文档信息
+                            doc_info = chr(10).join([f'{name}: {len(str(data["content"]))} 字符' for name, data in st.session_state.docs.items()])
+                            
+                            if template_data:
+                                template_str = template_data.get("template", "")
+                                # 替换模版中的占位符
+                                prompt = template_str.format(doc_info=doc_info)
+                            else:
+                                # 如果模版不存在，使用默认模版
+                                prompt = f"""请分析以下文档集合，提供数据分析:
 
 文档信息：
-{chr(10).join([f'{name}: {len(str(data["content"]))} 字符' for name, data in st.session_state.docs.items()])}
+{doc_info}
 
 请提供：
 1. 文档内容分布分析
 2. 潜在的数据模式和趋势
 3. 建议的数据可视化方式"""
-                    
-                    analysis = query_deepseek(prompt, api_key)
-                    st.markdown("### 📊 数据分析结果")
-                    st.write(analysis)
+                            
+                            analysis = query_deepseek(prompt, api_key)
+                            st.session_state.analysis_result = analysis
+                            st.session_state.analysis_template_name = template_data.get('name', '默认模版') if template_data else '默认模版'
+                
+                # 显示分析结果
+                if 'analysis_result' in st.session_state and st.session_state.analysis_result:
+                    st.markdown("---")
+                    st.markdown(f"### 📊 数据分析结果（使用模版：{st.session_state.analysis_template_name}）")
+                    st.write(st.session_state.analysis_result)
         
         # 显示版权信息
         show_footer()
