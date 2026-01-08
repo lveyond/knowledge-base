@@ -316,6 +316,114 @@ def load_api_key() -> Optional[str]:
         pass
     return None
 
+def load_embedding_model_config() -> str:
+    """从本地配置文件加载嵌入模型配置
+    
+    Returns:
+        模型名称，默认为 "BAAI/bge-small-zh-v1.5"
+    """
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                model_name = config.get("embedding_model", "BAAI/bge-small-zh-v1.5")
+                return model_name
+    except Exception:
+        pass
+    return "BAAI/bge-small-zh-v1.5"
+
+def save_embedding_model_config(model_name: str) -> bool:
+    """保存嵌入模型配置到本地配置文件
+    
+    Args:
+        model_name: 模型名称
+    
+    Returns:
+        是否保存成功
+    """
+    try:
+        # 读取现有配置
+        config = {}
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            except:
+                pass
+        
+        # 更新嵌入模型配置
+        config["embedding_model"] = model_name
+        config["embedding_model_updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # 保存配置
+        os.makedirs(os.path.dirname(CONFIG_FILE) if os.path.dirname(CONFIG_FILE) else ".", exist_ok=True)
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        if 'st' in globals():
+            st.error(f"保存嵌入模型配置失败: {str(e)}")
+        return False
+
+def download_model(model_name: str, progress_callback=None) -> bool:
+    """下载HuggingFace模型
+    
+    Args:
+        model_name: 模型名称（如 "BAAI/bge-base-zh-v1.5"）
+        progress_callback: 进度回调函数，接收 (progress, message) 参数
+    
+    Returns:
+        是否下载成功
+    """
+    try:
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError:
+            # 如果没有huggingface_hub，尝试使用transformers
+            try:
+                from transformers import AutoModel, AutoTokenizer
+                if progress_callback:
+                    progress_callback(50, f"🔄 正在下载模型 {model_name}...")
+                # 使用transformers下载（会自动缓存）
+                AutoModel.from_pretrained(model_name)
+                AutoTokenizer.from_pretrained(model_name)
+                if progress_callback:
+                    progress_callback(100, f"✅ 模型 {model_name} 下载完成！")
+                return True
+            except ImportError:
+                if progress_callback:
+                    progress_callback(100, f"❌ 请安装 huggingface_hub 或 transformers: pip install huggingface_hub")
+                return False
+        
+        if progress_callback:
+            progress_callback(10, f"🔄 开始下载模型 {model_name}...")
+        
+        # 使用huggingface_hub下载
+        cache_dir = os.path.join(
+            os.path.expanduser("~"),
+            ".cache",
+            "huggingface",
+            "hub"
+        )
+        
+        if progress_callback:
+            progress_callback(30, f"🔄 正在下载模型文件（这可能需要几分钟）...")
+        
+        snapshot_download(
+            repo_id=model_name,
+            cache_dir=cache_dir,
+            local_files_only=False
+        )
+        
+        if progress_callback:
+            progress_callback(100, f"✅ 模型 {model_name} 下载完成！")
+        
+        return True
+    except Exception as e:
+        if progress_callback:
+            progress_callback(100, f"❌ 下载失败: {str(e)}")
+        return False
+
 def delete_api_key(show_error: bool = True) -> bool:
     """删除本地保存的 API key"""
     try:
@@ -368,6 +476,34 @@ def read_excel_file(file_path):
     except ImportError:
         return {"错误": "请安装pandas和openpyxl"}
 
+def read_markdown_file(file_path):
+    """读取Markdown文件"""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception as e:
+        return f"Markdown读取失败: {str(e)}"
+
+def read_javascript_file(file_path):
+    """读取JavaScript文件"""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception as e:
+        return f"JavaScript读取失败: {str(e)}"
+
+def read_json_file(file_path):
+    """读取JSON文件"""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = json.load(f)
+            # 将JSON格式化为易读的字符串
+            return json.dumps(content, ensure_ascii=False, indent=2)
+    except json.JSONDecodeError as e:
+        return f"JSON解析失败: {str(e)}"
+    except Exception as e:
+        return f"JSON读取失败: {str(e)}"
+
 def process_folder(folder_path: str) -> Dict[str, Any]:
     """处理文件夹中的所有文件"""
     all_docs = {}
@@ -379,6 +515,9 @@ def process_folder(folder_path: str) -> Dict[str, Any]:
         '*.pdf': ('pdf', read_pdf_file),
         '*.xlsx': ('excel', read_excel_file),
         '*.xls': ('excel', read_excel_file),
+        '*.md': ('markdown', read_markdown_file),
+        '*.js': ('javascript', read_javascript_file),
+        '*.json': ('json', read_json_file),
     }
     
     for pattern, (file_type, reader_func) in file_patterns.items():
@@ -483,7 +622,8 @@ def check_db_corrupted(db_path: str) -> bool:
             from langchain_community.vectorstores import Chroma
         
         # 初始化嵌入模型
-        model_path = get_model_path("BAAI/bge-small-zh-v1.5")
+        embedding_model = load_embedding_model_config()
+        model_path = get_model_path(embedding_model)
         embeddings = HuggingFaceEmbeddings(
             model_name=model_path,
             model_kwargs={'device': 'cpu'},
@@ -675,7 +815,8 @@ def load_existing_vector_store(folder_path: str = None, progress_callback=None):
         
         # 初始化嵌入模型（必须与创建时使用相同的模型）
         # 优先使用本地模型路径，避免网络下载
-        model_path = get_model_path("BAAI/bge-small-zh-v1.5")
+        embedding_model = load_embedding_model_config()
+        model_path = get_model_path(embedding_model)
         embeddings = HuggingFaceEmbeddings(
             model_name=model_path,
             model_kwargs={'device': 'cpu'},
@@ -741,14 +882,14 @@ def calculate_content_hash(content: Any) -> str:
     return hashlib.md5(content_str.encode('utf-8')).hexdigest()
 
 def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
-    """检查文档是否发生变化
+    """检查文档是否发生变化（包括模型变化）
     
     Args:
         docs_dict: 当前文档字典
         folder_path: 文件夹路径
     
     Returns:
-        True 如果文档发生变化，False 如果未变化
+        True 如果文档或模型发生变化，False 如果未变化
     """
     # 创建文档签名文件路径（基于文件夹路径）
     db_path = get_vector_db_path(folder_path)
@@ -761,6 +902,16 @@ def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
         # 读取之前的签名
         with open(signature_file, 'r', encoding='utf-8') as f:
             old_signature = json.load(f)
+        
+        # 检查嵌入模型是否变化
+        current_embedding_model = load_embedding_model_config()
+        old_embedding_model = old_signature.get("embedding_model", "BAAI/bge-small-zh-v1.5")
+        old_embedding_dimension = old_signature.get("embedding_dimension", 384)
+        current_embedding_dimension = get_embedding_model_dimension(current_embedding_model)
+        
+        if old_embedding_model != current_embedding_model or old_embedding_dimension != current_embedding_dimension:
+            # 模型变化，需要重新创建向量数据库
+            return True
         
         # 生成当前文档签名
         current_signature = {
@@ -843,6 +994,22 @@ def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
         # 读取签名失败，认为文档已变化
         return True
 
+def get_embedding_model_dimension(model_name: str) -> int:
+    """获取嵌入模型的向量维度
+    
+    Args:
+        model_name: 模型名称
+    
+    Returns:
+        向量维度
+    """
+    model_dimensions = {
+        "BAAI/bge-small-zh-v1.5": 384,
+        "BAAI/bge-base-zh-v1.5": 768,
+        "BAAI/bge-large-zh-v1.5": 1024,
+    }
+    return model_dimensions.get(model_name, 384)  # 默认384
+
 def save_docs_signature(docs_dict: Dict[str, Any], folder_path: str):
     """保存文档签名
     
@@ -855,11 +1022,17 @@ def save_docs_signature(docs_dict: Dict[str, Any], folder_path: str):
         os.makedirs(db_path, exist_ok=True)
         signature_file = os.path.join(db_path, ".docs_signature.json")
         
+        # 获取当前使用的嵌入模型
+        embedding_model = load_embedding_model_config()
+        embedding_dimension = get_embedding_model_dimension(embedding_model)
+        
         signature = {
             "folder_path": folder_path,
             "file_count": len(docs_dict),
             "files": {},
-            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "embedding_model": embedding_model,  # 保存使用的模型
+            "embedding_dimension": embedding_dimension  # 保存模型维度
         }
         
         for filename, data in docs_dict.items():
@@ -928,20 +1101,67 @@ def create_local_vector_store(docs_dict: Dict[str, Any], progress_callback=None,
         if not os.access(parent_dir, os.W_OK):
             raise PermissionError(f"没有写入权限: {parent_dir}")
         
-        # 如果数据库目录已存在，先检测是否损坏
+        # 如果数据库目录已存在，先检测是否损坏或模型维度不匹配
         # 注意：此函数只在文档变化或数据库不存在时被调用
         # 如果数据库存在且正常，调用者应该已经检查过文档变化
         if os.path.exists(db_path):
             if progress_callback:
                 progress_callback(5, "🔄 检测向量数据库状态...")
             
+            # 检查模型维度是否匹配
+            embedding_model = load_embedding_model_config()
+            expected_dimension = get_embedding_model_dimension(embedding_model)
+            
+            # 尝试检测现有数据库的维度
+            dimension_mismatch = False
+            try:
+                # 尝试加载数据库来检测维度
+                try:
+                    from langchain_huggingface import HuggingFaceEmbeddings
+                except ImportError:
+                    from langchain_community.embeddings import HuggingFaceEmbeddings
+                
+                try:
+                    from langchain_chroma import Chroma
+                except ImportError:
+                    from langchain_community.vectorstores import Chroma
+                
+                # 使用当前模型初始化
+                model_path = get_model_path(embedding_model)
+                test_embeddings = HuggingFaceEmbeddings(
+                    model_name=model_path,
+                    model_kwargs={'device': 'cpu'},
+                    encode_kwargs={'normalize_embeddings': True}
+                )
+                
+                # 尝试加载向量数据库
+                test_vectorstore = Chroma(
+                    persist_directory=db_path,
+                    embedding_function=test_embeddings
+                )
+                
+                # 尝试访问数据库，如果维度不匹配会抛出异常
+                try:
+                    _ = len(test_vectorstore)
+                except Exception as dim_error:
+                    error_msg = str(dim_error).lower()
+                    if "dimension" in error_msg or "dimensionality" in error_msg:
+                        dimension_mismatch = True
+            except Exception:
+                # 如果检测失败，假设维度不匹配（安全起见）
+                dimension_mismatch = True
+            
             # 检测数据库是否损坏（特别是 schema 兼容性问题）
             is_corrupted = check_db_corrupted(db_path)
             
-            if is_corrupted:
-                # 数据库损坏，需要清理后重新创建
-                if progress_callback:
-                    progress_callback(5, "⚠️ 检测到数据库损坏（可能是版本兼容性问题），正在清理...")
+            if is_corrupted or dimension_mismatch:
+                # 数据库损坏或维度不匹配，需要清理后重新创建
+                if dimension_mismatch:
+                    if progress_callback:
+                        progress_callback(5, f"⚠️ 检测到模型维度不匹配（当前模型维度: {expected_dimension}），正在清理旧数据库...")
+                else:
+                    if progress_callback:
+                        progress_callback(5, "⚠️ 检测到数据库损坏（可能是版本兼容性问题），正在清理...")
                 cleanup_corrupted_db(db_path, force=True)
                 import time
                 time.sleep(1)  # 等待文件系统更新
@@ -1001,11 +1221,12 @@ def create_local_vector_store(docs_dict: Dict[str, Any], progress_callback=None,
             progress_callback(55, "🔄 步骤 3/4: 初始化嵌入模型（首次运行会下载模型，可能需要几分钟）...")
         
         # 优先使用本地模型路径，避免网络下载
-        model_path = get_model_path("BAAI/bge-small-zh-v1.5")
+        embedding_model = load_embedding_model_config()
+        model_path = get_model_path(embedding_model)
         
         try:
             embeddings = HuggingFaceEmbeddings(
-                model_name=model_path,  # 中文优化的小模型
+                model_name=model_path,  # 使用配置的嵌入模型
                 model_kwargs={'device': 'cpu'},
                 encode_kwargs={'normalize_embeddings': True}
             )
@@ -1463,6 +1684,8 @@ def main():
         st.session_state.api_key_loaded = False
     if 'is_creating_vectorstore' not in st.session_state:
         st.session_state.is_creating_vectorstore = False
+    if 'embedding_model' not in st.session_state:
+        st.session_state.embedding_model = load_embedding_model_config()
     
     # 侧边栏
     with st.sidebar:
@@ -1545,7 +1768,7 @@ def main():
             help="deepseek-chat: 通用对话模型\ndeepseek-coder: 代码专用模型"
         )
         
-        # API 超时和重试配置
+        # API 超时和重试配置（高级设置）
         if 'api_timeout' not in st.session_state:
             st.session_state.api_timeout = 60
         if 'api_max_retries' not in st.session_state:
@@ -1572,6 +1795,128 @@ def main():
             # 保存到 session state
             st.session_state.api_timeout = timeout_seconds
             st.session_state.api_max_retries = max_retries
+        
+        st.markdown("---")
+        
+        # 嵌入模型配置
+        st.subheader("🤖 嵌入模型设置")
+        
+        # 初始化嵌入模型配置
+        if 'embedding_model' not in st.session_state:
+            st.session_state.embedding_model = load_embedding_model_config()
+        
+        # 可用的嵌入模型列表
+        embedding_models = {
+            "BAAI/bge-small-zh-v1.5": {
+                "name": "bge-small-zh-v1.5",
+                "description": "轻量快速（384维，~130MB）",
+                "size": "~130MB",
+                "performance": "⭐⭐⭐"
+            },
+            "BAAI/bge-base-zh-v1.5": {
+                "name": "bge-base-zh-v1.5",
+                "description": "平衡性能（768维，~420MB）",
+                "size": "~420MB",
+                "performance": "⭐⭐⭐⭐"
+            },
+            "BAAI/bge-large-zh-v1.5": {
+                "name": "bge-large-zh-v1.5",
+                "description": "最佳性能（1024维，~1.2GB）",
+                "size": "~1.2GB",
+                "performance": "⭐⭐⭐⭐⭐"
+            }
+        }
+        
+        # 模型选择下拉框
+        model_options = [f"{info['name']} - {info['description']}" for model_id, info in embedding_models.items()]
+        current_model_index = 0
+        for idx, (model_id, info) in enumerate(embedding_models.items()):
+            if model_id == st.session_state.embedding_model:
+                current_model_index = idx
+                break
+        
+        selected_model_display = st.selectbox(
+            "选择嵌入模型",
+            options=model_options,
+            index=current_model_index,
+            help="用于文档向量化的模型。更大的模型性能更好，但需要更多内存和存储空间。"
+        )
+        
+        # 获取选中的模型ID
+        selected_model_id = list(embedding_models.keys())[model_options.index(selected_model_display)]
+        
+        # 显示当前模型信息
+        current_model_info = embedding_models[selected_model_id]
+        st.caption(f"📊 性能: {current_model_info['performance']} | 💾 大小: {current_model_info['size']}")
+        
+        # 检查模型是否已下载
+        model_path = get_model_path(selected_model_id)
+        # 检查模型是否存在（本地路径或HuggingFace缓存）
+        cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
+        cache_model_name = f"models--{selected_model_id.replace('/', '--')}"
+        cache_path = os.path.join(cache_dir, cache_model_name)
+        
+        # 判断模型是否存在
+        model_exists = (
+            (os.path.exists(model_path) and os.path.isdir(model_path)) or  # 本地路径存在
+            os.path.exists(cache_path)  # HuggingFace缓存存在
+        )
+        
+        # 如果模型不存在，显示下载选项
+        if not model_exists and selected_model_id != "BAAI/bge-small-zh-v1.5":
+            if not os.path.exists(cache_path):
+                with st.expander("📥 下载模型", expanded=False):
+                    st.info(f"模型 {selected_model_id} 尚未下载，首次使用需要下载。")
+                    if st.button(f"⬇️ 下载 {current_model_info['name']}", use_container_width=True, key=f"download_{selected_model_id}"):
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        success = download_model(
+                            selected_model_id,
+                            progress_callback=lambda p, msg: (
+                                progress_bar.progress(p / 100.0),
+                                status_text.text(msg)
+                            )
+                        )
+                        
+                        if success:
+                            st.success(f"✅ 模型 {current_model_info['name']} 下载完成！")
+                            st.info("💡 请刷新页面后使用新模型")
+                        else:
+                            st.error("❌ 下载失败，请检查网络连接")
+                        
+                        import time
+                        time.sleep(1)
+                        progress_bar.empty()
+                        status_text.empty()
+            else:
+                st.success(f"✅ 模型 {current_model_info['name']} 已下载")
+        
+        # 保存模型选择
+        if selected_model_id != st.session_state.embedding_model:
+            # 检查是否有现有的向量数据库
+            has_existing_db = False
+            if os.path.exists("./chroma_db"):
+                try:
+                    db_dirs = [d for d in os.listdir("./chroma_db") 
+                              if os.path.isdir(os.path.join("./chroma_db", d))]
+                    has_existing_db = len(db_dirs) > 0
+                except:
+                    pass
+            
+            if save_embedding_model_config(selected_model_id):
+                st.session_state.embedding_model = selected_model_id
+                st.success(f"✅ 已切换到 {current_model_info['name']}")
+                
+                if has_existing_db:
+                    st.warning("⚠️ **重要提示**：切换模型后，现有的向量数据库将无法使用（维度不匹配）")
+                    st.info("💡 **操作建议**：\n"
+                           "1. 切换模型后，系统会在下次创建向量数据库时自动清理旧数据库\n"
+                           "2. 或者手动删除向量数据库：在侧边栏的'向量数据库管理'中删除\n"
+                           "3. 然后重新加载文件夹或上传文件，系统会使用新模型重新创建向量数据库")
+                else:
+                    st.info("💡 切换模型后，下次创建向量数据库时将使用新模型")
+                st.rerun()
         
         st.markdown("---")
         st.header("📁 文件管理")
@@ -1689,7 +2034,7 @@ def main():
         st.subheader("或上传文件")
         uploaded_files = st.file_uploader(
             "选择文件",
-            type=['txt', 'docx', 'pdf', 'xlsx', 'xls'],
+            type=['txt', 'docx', 'pdf', 'xlsx', 'xls', 'md', 'js', 'json'],
             accept_multiple_files=True,
             label_visibility="collapsed"
         )
@@ -1714,6 +2059,12 @@ def main():
                         content = read_pdf_file(file_path)
                     elif file_ext in ['xlsx', 'xls']:
                         content = read_excel_file(file_path)
+                    elif file_ext == 'md':
+                        content = read_markdown_file(file_path)
+                    elif file_ext == 'js':
+                        content = read_javascript_file(file_path)
+                    elif file_ext == 'json':
+                        content = read_json_file(file_path)
                     else:
                         content = f"不支持的文件类型: {file_ext}"
                     
@@ -2477,8 +2828,8 @@ def simple_main():
     
     # 文件上传
     uploaded_files = st.file_uploader(
-        "上传文件 (支持txt, docx, pdf, excel)",
-        type=['txt', 'docx', 'pdf', 'xlsx', 'xls'],
+        "上传文件 (支持txt, docx, pdf, excel, md, js, json)",
+        type=['txt', 'docx', 'pdf', 'xlsx', 'xls', 'md', 'js', 'json'],
         accept_multiple_files=True
     )
     
@@ -2504,6 +2855,12 @@ def simple_main():
                     content = read_pdf_file(file_path)
                 elif file_ext in ['xlsx', 'xls']:
                     content = read_excel_file(file_path)
+                elif file_ext == 'md':
+                    content = read_markdown_file(file_path)
+                elif file_ext == 'js':
+                    content = read_javascript_file(file_path)
+                elif file_ext == 'json':
+                    content = read_json_file(file_path)
                 else:
                     content = f"不支持的文件类型"
                 
