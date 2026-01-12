@@ -443,13 +443,36 @@ def read_text_file(file_path):
         return f.read()
 
 def read_docx_file(file_path):
-    """读取Word文档"""
+    """读取Word文档（包括段落和表格）"""
     try:
         from docx import Document
         doc = Document(file_path)
-        return '\n'.join([para.text for para in doc.paragraphs])
+        text_parts = []
+        
+        # 提取段落文本
+        for para in doc.paragraphs:
+            if para.text.strip():  # 只添加非空段落
+                text_parts.append(para.text)
+        
+        # 提取表格内容
+        for table in doc.tables:
+            table_text = []
+            for row in table.rows:
+                row_text = []
+                for cell in row.cells:
+                    cell_text = cell.text.strip()
+                    if cell_text:
+                        row_text.append(cell_text)
+                if row_text:
+                    table_text.append(' | '.join(row_text))
+            if table_text:
+                text_parts.append('\n表格:\n' + '\n'.join(table_text))
+        
+        return '\n\n'.join(text_parts) if text_parts else ""
     except ImportError:
         return "请安装python-docx: pip install python-docx"
+    except Exception as e:
+        return f"Word文档读取失败: {str(e)}"
 
 def read_pdf_file(file_path):
     """读取PDF文件"""
