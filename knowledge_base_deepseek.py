@@ -546,6 +546,12 @@ def process_folder(folder_path: str) -> Dict[str, Any]:
     for pattern, (file_type, reader_func) in file_patterns.items():
         for file_path in glob.glob(os.path.join(folder_path, pattern)):
             file_name = os.path.basename(file_path)
+            
+            # 跳过临时文件和隐藏文件
+            # Excel 临时文件以 ~$ 开头，Word 临时文件也可能以 ~$ 开头
+            if file_name.startswith('~$') or file_name.startswith('.'):
+                continue
+            
             try:
                 content = reader_func(file_path)
                 all_docs[file_name] = {
@@ -721,49 +727,49 @@ def cleanup_corrupted_db(db_path: str, force: bool = True):
                 
                 # 验证是否删除成功
                 if not os.path.exists(db_path):
-                    print(f"✅ 已彻底清理损坏的向量数据库目录: {db_path}")
+                    print(f"[OK] 已彻底清理损坏的向量数据库目录: {db_path}")
                     return True
                     
             except PermissionError as pe:
                 # Windows 上可能有文件被锁定，等待后重试
                 if attempt < max_attempts - 1:
                     wait_interval = wait_time * (attempt + 1)  # 递增等待时间
-                    print(f"⚠️ 文件被锁定，等待 {wait_interval:.1f} 秒后重试 ({attempt + 1}/{max_attempts})...")
+                    print(f"[WARN] 文件被锁定，等待 {wait_interval:.1f} 秒后重试 ({attempt + 1}/{max_attempts})...")
                     time.sleep(wait_interval)
                     continue
                 else:
-                    print(f"❌ 清理失败（文件被锁定）: {str(pe)}")
+                    print(f"[ERROR] 清理失败（文件被锁定）: {str(pe)}")
                     print(f"   请手动删除目录: {db_path}")
                     return False
             except Exception as e:
                 if attempt < max_attempts - 1:
                     wait_interval = wait_time * (attempt + 1)
-                    print(f"⚠️ 清理失败，等待 {wait_interval:.1f} 秒后重试 ({attempt + 1}/{max_attempts}): {str(e)}")
+                    print(f"[WARN] 清理失败，等待 {wait_interval:.1f} 秒后重试 ({attempt + 1}/{max_attempts}): {str(e)}")
                     time.sleep(wait_interval)
                     continue
                 else:
-                    print(f"❌ 清理失败: {str(e)}")
+                    print(f"[ERROR] 清理失败: {str(e)}")
                     print(f"   请手动删除目录: {db_path}")
                     return False
         
         # 如果多次尝试后仍然存在，尝试使用 ignore_errors（忽略错误强制删除）
         if os.path.exists(db_path):
             try:
-                print(f"🔄 尝试强制删除模式（忽略错误）...")
+                print(f"[INFO] 尝试强制删除模式（忽略错误）...")
                 shutil.rmtree(db_path, ignore_errors=True)
                 time.sleep(wait_time * 2)  # 等待更长时间
                 if not os.path.exists(db_path):
-                    print(f"✅ 已强制清理数据库目录: {db_path}")
+                    print(f"[OK] 已强制清理数据库目录: {db_path}")
                     return True
             except Exception as e:
-                print(f"⚠️ 强制删除模式也失败: {str(e)}")
+                print(f"[WARN] 强制删除模式也失败: {str(e)}")
         
         # 最后尝试：重命名目录（如果无法删除，至少不影响后续操作）
         if os.path.exists(db_path):
             try:
                 temp_name = db_path + "_deleted_" + str(int(time.time()))
                 os.rename(db_path, temp_name)
-                print(f"⚠️ 无法删除目录，已重命名为: {temp_name}")
+                print(f"[WARN] 无法删除目录，已重命名为: {temp_name}")
                 print(f"   可以在程序关闭后手动删除该备份目录")
                 return True  # 重命名成功也算成功（不影响后续操作）
             except Exception as e:
@@ -777,7 +783,7 @@ def cleanup_corrupted_db(db_path: str, force: bool = True):
         try:
             if os.path.exists(db_path):
                 shutil.rmtree(db_path)
-                print(f"✅ 已清理数据库目录: {db_path}")
+                print(f"[OK] 已清理数据库目录: {db_path}")
                 return True
         except Exception as e:
             print(f"⚠️ 清理失败: {str(e)}")
@@ -799,8 +805,28 @@ def get_vector_db_path(folder_path: str) -> str:
         return "./chroma_db"
     
     # 使用路径的哈希值创建唯一目录名
-    # 规范化路径（统一使用正斜杠，处理大小写）
-    normalized_path = os.path.normpath(folder_path).replace('\\', '/')
+    # 规范化路径：与 normalize_path 保持一致，确保路径规范化逻辑统一
+    try:
+        # 先规范化路径格式（统一斜杠）
+        normalized = os.path.normpath(folder_path)
+        # 转换为绝对路径（如果路径存在）
+        if os.path.exists(normalized):
+            normalized = os.path.abspath(normalized)
+        else:
+            # 如果路径不存在，仍然规范化格式
+            normalized = os.path.normpath(normalized)
+        # 统一使用正斜杠，并转换为小写（Windows路径大小写不敏感）
+        normalized_path = normalized.replace('\\', '/')
+        if os.name == 'nt':  # Windows系统
+            normalized_path = normalized_path.lower()
+    except Exception as e:
+        # 如果规范化失败，使用基本规范化
+        print(f"⚠️ 路径规范化失败: {folder_path}, 错误: {str(e)}")
+        normalized_path = os.path.normpath(folder_path).replace('\\', '/')
+        if os.name == 'nt':
+            normalized_path = normalized_path.lower()
+    
+    # 使用规范化后的路径计算哈希值
     path_hash = hashlib.md5(normalized_path.encode('utf-8')).hexdigest()[:12]
     
     # 创建安全的目录名（移除特殊字符）
@@ -990,8 +1016,14 @@ def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
     db_path = get_vector_db_path(folder_path)
     signature_file = os.path.join(db_path, ".docs_signature.json")
     
+    # 检查数据库目录是否存在
+    if not os.path.exists(db_path):
+        print(f"[INFO] 向量数据库目录不存在: {db_path}")
+        return True  # 数据库目录不存在，认为需要创建
+    
+    # 检查签名文件是否存在
     if not os.path.exists(signature_file):
-        print(f"📝 文档签名文件不存在: {signature_file}")
+        print(f"[INFO] 文档签名文件不存在: {signature_file}")
         return True  # 签名文件不存在，认为文档已变化
     
     try:
@@ -1006,30 +1038,34 @@ def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
         current_embedding_dimension = get_embedding_model_dimension(current_embedding_model)
         
         if old_embedding_model != current_embedding_model or old_embedding_dimension != current_embedding_dimension:
-            print(f"🔄 嵌入模型变化: {old_embedding_model} ({old_embedding_dimension}维) -> {current_embedding_model} ({current_embedding_dimension}维)")
+            print(f"[CHANGE] 嵌入模型变化: {old_embedding_model} ({old_embedding_dimension}维) -> {current_embedding_model} ({current_embedding_dimension}维)")
             return True
         
         # 生成当前文档签名
+        # 使用规范化后的路径，确保与保存的签名路径格式一致
+        normalized_current_folder_path = normalize_path(folder_path) if folder_path else None
+        
         current_signature = {
-            "folder_path": folder_path,
+            "folder_path": normalized_current_folder_path,  # 使用规范化后的路径
             "file_count": len(docs_dict),
             "files": {}
         }
         
         for filename, data in docs_dict.items():
             file_path = data.get('path', '')
-            content = data.get('content', '')
             
             file_info = {
                 "size": data.get('size', 0),
-                "content_hash": calculate_content_hash(content)  # 使用内容哈希
+                "type": data.get('type', '')  # 文件类型
             }
             
-            # 如果文件路径存在且是持久路径（非临时路径），也记录修改时间
+            # 如果文件路径存在且是持久路径（非临时路径），记录完整路径和修改时间
             if file_path and os.path.exists(file_path):
                 # 检查是否是临时路径（临时路径通常包含 temp 或 tmp）
                 is_temp_path = 'temp' in file_path.lower() or 'tmp' in file_path.lower()
                 if not is_temp_path:
+                    # 保存完整路径（规范化后）和修改时间
+                    file_info["path"] = normalize_path(file_path)  # 保存规范化后的完整路径
                     file_info["mtime"] = os.path.getmtime(file_path)
             
             current_signature["files"][filename] = file_info
@@ -1050,23 +1086,23 @@ def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
         if old_path_norm and current_path_norm:
             # 两个路径都不为空，需要比较
             if old_path_norm != current_path_norm:
-                print(f"📁 文件夹路径变化: {old_folder_path} -> {current_folder_path}")
+                print(f"[CHANGE] 文件夹路径变化: {old_folder_path} -> {current_folder_path}")
                 return True
             # 路径相同，继续检查文件内容
         elif not old_path_norm and current_path_norm:
             # 旧路径为空但新路径不为空，可能是首次创建
             # 如果文件内容哈希都匹配，可以认为未变化（兼容旧版本）
-            print(f"📁 文件夹路径状态变化: 旧路径为空, 新路径={current_folder_path}")
+            print(f"[INFO] 文件夹路径状态变化: 旧路径为空, 新路径={current_folder_path}")
             # 继续检查文件内容
         elif old_path_norm and not current_path_norm:
             # 旧路径不为空但新路径为空，可能是路径丢失
             # 如果文件内容哈希都匹配，仍可使用（兼容性）
-            print(f"📁 文件夹路径状态变化: 旧路径={old_folder_path}, 新路径为空")
+            print(f"[INFO] 文件夹路径状态变化: 旧路径={old_folder_path}, 新路径为空")
             # 继续检查文件内容
         # 如果两个路径都为空，继续检查文件内容
         
         if old_signature.get("file_count") != current_signature["file_count"]:
-            print(f"📊 文件数量变化: {old_signature.get('file_count')} -> {current_signature['file_count']}")
+            print(f"[CHANGE] 文件数量变化: {old_signature.get('file_count')} -> {current_signature['file_count']}")
             return True
         
         old_files = old_signature.get("files", {})
@@ -1077,10 +1113,10 @@ def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
             current_keys = set(current_files.keys())
             added = current_keys - old_keys
             removed = old_keys - current_keys
-            print(f"📄 文件名变化: 新增={added}, 删除={removed}")
+            print(f"[CHANGE] 文件名变化: 新增={added}, 删除={removed}")
             return True
         
-        # 检查文件内容哈希（优先）和文件大小/修改时间
+        # 检查文件：文件名（完整路径）、大小、类型、修改时间
         changed_files = []
         for filename in old_files.keys():
             if filename not in current_files:
@@ -1090,48 +1126,65 @@ def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
             old_info = old_files[filename]
             current_info = current_files[filename]
             
-            # 优先使用内容哈希进行比较（最可靠的方法）
-            old_hash = old_info.get("content_hash")
-            current_hash = current_info.get("content_hash")
-            
-            # 如果当前有内容哈希，优先使用哈希比较
-            if current_hash:
-                if old_hash:
-                    # 两者都有哈希值，直接比较
-                    if old_hash != current_hash:
-                        changed_files.append(f"{filename} (内容哈希变化)")
-                        return True
-                    # 哈希值相同，认为文档未变化（即使修改时间不同）
-                    continue
-                else:
-                    # 旧签名没有哈希值（可能是旧版本保存的），但当前有
-                    # 这种情况下，我们只比较文件大小，不比较修改时间
-                    # 因为修改时间可能因为各种原因变化（文件被重新保存、系统时间调整等）
-                    # 但文件大小相同通常意味着内容相同（虽然不是100%确定，但概率很高）
-                    if old_info.get("size") != current_info.get("size"):
-                        changed_files.append(f"{filename} (大小变化: {old_info.get('size')} -> {current_info.get('size')})")
-                        return True
-                    # 文件大小相同，认为文档未变化（即使修改时间不同）
-                    # 签名文件会在保存时更新，添加内容哈希，下次比较会更准确
-                    continue
-            
-            # 如果当前没有内容哈希（不应该发生，但为了兼容性保留）
-            # 回退到大小和修改时间比较
-            if (old_info.get("size") != current_info.get("size") or 
-                (old_info.get("mtime") and current_info.get("mtime") and
-                 abs(old_info.get("mtime", 0) - current_info.get("mtime", 0)) > 1)):
-                changed_files.append(f"{filename} (大小或修改时间变化)")
+            # 1. 检查文件大小
+            if old_info.get("size") != current_info.get("size"):
+                changed_files.append(f"{filename} (大小变化: {old_info.get('size')} -> {current_info.get('size')})")
                 return True
+            
+            # 2. 检查文件类型
+            if old_info.get("type") != current_info.get("type"):
+                changed_files.append(f"{filename} (类型变化: {old_info.get('type')} -> {current_info.get('type')})")
+                return True
+            
+            # 3. 检查文件路径（完整路径）
+            old_path = old_info.get("path")
+            current_path = current_info.get("path")
+            if old_path and current_path:
+                # 两者都有路径，比较规范化后的路径
+                if old_path != current_path:
+                    changed_files.append(f"{filename} (路径变化: {old_path} -> {current_path})")
+                    return True
+            
+            # 4. 检查修改时间（如果都存在）
+            old_mtime = old_info.get("mtime")
+            current_mtime = current_info.get("mtime")
+            if old_mtime and current_mtime:
+                # 修改时间差异超过1秒认为文件已变化
+                if abs(old_mtime - current_mtime) > 1:
+                    changed_files.append(f"{filename} (修改时间变化)")
+                    return True
         
         if changed_files:
-            print(f"📝 检测到文档变化: {', '.join(changed_files)}")
+            print(f"[CHANGE] 检测到文档变化: {', '.join(changed_files)}")
             return True
         
-        print("✅ 文档未变化，可以使用已有向量数据库")
-        return False  # 文档未变化
+        # 文档未变化，只检查数据库文件是否存在，不验证是否可用
+        # 如果文档未变化，即使数据库损坏，也不应该自动重新创建
+        # 数据库的可用性由 load_existing_vector_store 来验证
+        try:
+            # 只检查数据库文件是否存在
+            chroma_sqlite = os.path.join(db_path, "chroma.sqlite3")
+            if not os.path.exists(chroma_sqlite):
+                print(f"[INFO] 数据库文件不存在: {chroma_sqlite}")
+                return True  # 数据库文件不存在，需要重新创建
+            
+            # 检查数据库文件大小，如果为0，可能损坏
+            if os.path.getsize(chroma_sqlite) == 0:
+                print(f"[INFO] 数据库文件为空，可能损坏")
+                return True  # 数据库文件为空，需要重新创建
+            
+            # 文档未变化且数据库文件存在，返回 False（文档未变化）
+            # 数据库的可用性由 load_existing_vector_store 来验证
+            # 如果数据库损坏，load_existing_vector_store 会返回 None，界面会提示但不会自动重新创建
+            print("[OK] 文档未变化，可以使用已有向量数据库")
+            return False
+        except Exception as e:
+            print(f"[WARN] 验证数据库文件时出错: {str(e)}")
+            # 验证出错，保守起见认为需要重新创建
+            return True
     except Exception as e:
         # 读取签名失败，记录错误但认为文档已变化
-        print(f"❌ 读取文档签名失败: {str(e)}")
+        print(f"[ERROR] 读取文档签名失败: {str(e)}")
         import traceback
         traceback.print_exc()
         return True
@@ -1168,8 +1221,11 @@ def save_docs_signature(docs_dict: Dict[str, Any], folder_path: str):
         embedding_model = load_embedding_model_config()
         embedding_dimension = get_embedding_model_dimension(embedding_model)
         
+        # 保存规范化后的路径，确保路径比较时一致
+        normalized_folder_path = normalize_path(folder_path) if folder_path else None
+        
         signature = {
-            "folder_path": folder_path,
+            "folder_path": normalized_folder_path,  # 保存规范化后的路径
             "file_count": len(docs_dict),
             "files": {},
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -1179,18 +1235,19 @@ def save_docs_signature(docs_dict: Dict[str, Any], folder_path: str):
         
         for filename, data in docs_dict.items():
             file_path = data.get('path', '')
-            content = data.get('content', '')
             
             file_info = {
                 "size": data.get('size', 0),
-                "content_hash": calculate_content_hash(content)  # 保存内容哈希
+                "type": data.get('type', '')  # 文件类型
             }
             
-            # 如果文件路径存在且是持久路径（非临时路径），也记录修改时间
+            # 如果文件路径存在且是持久路径（非临时路径），记录完整路径和修改时间
             if file_path and os.path.exists(file_path):
                 # 检查是否是临时路径
                 is_temp_path = 'temp' in file_path.lower() or 'tmp' in file_path.lower()
                 if not is_temp_path:
+                    # 保存完整路径（规范化后）和修改时间
+                    file_info["path"] = normalize_path(file_path)  # 保存规范化后的完整路径
                     file_info["mtime"] = os.path.getmtime(file_path)
             
             signature["files"][filename] = file_info
@@ -2291,19 +2348,34 @@ def main():
                             # 检查文档是否变化
                             docs_changed = check_docs_changed(st.session_state.docs, folder_path)
                             
-                            # 如果 load_existing_vector_store 返回了 vectorstore，说明数据库可用
-                            # 不需要再次验证，避免重复验证导致的问题
-                            if existing_vectorstore and not docs_changed:
-                                # 文档未变化，使用已有向量数据库
-                                st.session_state.vectorstore = existing_vectorstore
-                                progress_bar.progress(1.0)
-                                status_text.text("✅ 已加载已有向量数据库！")
-                                success_placeholder.success("✅ 已加载已有向量数据库（文档未变化）")
+                            # 根据文档变化和数据库加载情况决定操作
+                            if not docs_changed:
+                                # 文档未变化
+                                if existing_vectorstore:
+                                    # 数据库可用，使用已有向量数据库
+                                    st.session_state.vectorstore = existing_vectorstore
+                                    progress_bar.progress(1.0)
+                                    status_text.text("✅ 已加载已有向量数据库！")
+                                    success_placeholder.success("✅ 已加载已有向量数据库（文档未变化）")
+                                else:
+                                    # 文档未变化但数据库无法加载（可能损坏）
+                                    # 不自动重新创建，提示用户
+                                    progress_bar.progress(1.0)
+                                    status_text.text("⚠️ 文档未变化，但向量数据库无法加载")
+                                    warning_msg = (
+                                        "⚠️ **文档未变化，但向量数据库无法加载**\n\n"
+                                        "可能的原因：\n"
+                                        "- 向量数据库文件损坏\n"
+                                        "- 数据库版本不兼容\n\n"
+                                        "**建议**：\n"
+                                        "- 如果数据库损坏，可以手动删除数据库目录后重新创建\n"
+                                        "- 或者点击'重新加载'按钮强制重新创建"
+                                    )
+                                    error_placeholder.warning(warning_msg)
+                                    st.session_state.vectorstore = None
                             else:
-                                # 文档变化或不存在，需要重新创建
-                                # 移除所有硬编码的进度更新，让 create_local_vector_store 完全控制进度
-                                # 这样进度条会一直往前走，不会回退
-                                if existing_vectorstore and docs_changed:
+                                # 文档已变化，需要重新创建
+                                if existing_vectorstore:
                                     status_text.text("📝 检测到文档变化，正在重新创建向量数据库...")
                                     progress_bar.progress(0.01)
                                 
@@ -2349,14 +2421,83 @@ def main():
         
         with col2:
             if st.button("🔄 重新加载", use_container_width=True, disabled=is_creating_vectorstore):
-                st.session_state.docs = {}
-                st.session_state.vectorstore = None
-                st.session_state.is_creating_vectorstore = False
-                info_placeholder.empty()
-                progress_placeholder.empty()
-                status_placeholder.empty()
-                success_placeholder.empty()
-                st.rerun()
+                # 获取当前文件夹路径
+                current_folder_path = st.session_state.get('current_folder_path', None)
+                
+                if current_folder_path and os.path.exists(current_folder_path) and os.path.isdir(current_folder_path):
+                    # 如果有当前文件夹路径，重新加载并强制重新创建向量数据库
+                    st.session_state.is_creating_vectorstore = True
+                    progress_bar = progress_placeholder.progress(0)
+                    status_text = status_placeholder.empty()
+                    
+                    try:
+                        # 重新读取文件
+                        with st.spinner("正在重新读取文件..."):
+                            st.session_state.docs = process_folder(current_folder_path)
+                        
+                        if st.session_state.docs:
+                            info_placeholder.info(f"📄 已加载 {len(st.session_state.docs)} 个文件")
+                            
+                            # 强制重新创建向量数据库（即使文档未变化）
+                            status_text.text("🔄 正在强制重新创建向量数据库...")
+                            progress_bar.progress(0.01)
+                            
+                            # 删除旧的数据库目录（如果存在）
+                            db_path = get_vector_db_path(current_folder_path)
+                            if os.path.exists(db_path):
+                                try:
+                                    import shutil
+                                    shutil.rmtree(db_path)
+                                    print(f"[INFO] 已删除旧数据库目录: {db_path}")
+                                except Exception as e:
+                                    print(f"[WARN] 删除旧数据库目录失败: {str(e)}")
+                            
+                            # 创建新的向量数据库
+                            try:
+                                st.session_state.vectorstore = create_local_vector_store(
+                                    st.session_state.docs,
+                                    folder_path=current_folder_path,
+                                    progress_callback=lambda p, msg: (
+                                        progress_bar.progress(p / 100.0),
+                                        status_text.text(msg)
+                                    )
+                                )
+                                
+                                if st.session_state.vectorstore:
+                                    progress_bar.progress(1.0)
+                                    status_text.text("✅ 向量数据库重新创建完成！")
+                                    success_placeholder.success("✅ 向量数据库重新创建完成！")
+                                    error_placeholder.empty()
+                                else:
+                                    progress_placeholder.empty()
+                                    status_placeholder.empty()
+                                    error_placeholder.error("❌ 向量数据库创建失败")
+                            except Exception as create_error:
+                                progress_placeholder.empty()
+                                status_placeholder.empty()
+                                error_type = type(create_error).__name__
+                                error_msg = str(create_error)
+                                error_placeholder.error(f"⚠️ **向量数据库创建失败**\n\n"
+                                                      f"**错误类型**: `{error_type}`\n\n"
+                                                      f"**错误信息**: {error_msg}")
+                                st.session_state.vectorstore = None
+                    finally:
+                        st.session_state.is_creating_vectorstore = False
+                        import time
+                        time.sleep(0.5)
+                        progress_placeholder.empty()
+                        status_placeholder.empty()
+                else:
+                    # 如果没有当前文件夹路径，只清空状态
+                    st.session_state.docs = {}
+                    st.session_state.vectorstore = None
+                    st.session_state.is_creating_vectorstore = False
+                    info_placeholder.empty()
+                    progress_placeholder.empty()
+                    status_placeholder.empty()
+                    success_placeholder.empty()
+                    error_placeholder.empty()
+                    st.rerun()
         
         # 如果不在创建过程中，显示已加载文件信息
         if st.session_state.get('docs') and not is_creating_vectorstore:
