@@ -90,6 +90,20 @@ def get_default_summary_templates() -> Dict[str, Dict[str, Any]]:
 
 分析报告：""",
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        },
+        "roadmap": {
+            "name": "技术路线图模版",
+            "description": "生成符号化技术路线图",
+            "template": """请根据所选文档内容，制作项目的技术路线图（用线条符号来尝试组件技术路线图）。要求：
+· 主要阶段使用方括号 [] 包裹，通过向下箭头 ↓ 连接
+· 子任务通过向右箭头 → 连接
+· 支持缩进表示层级关系
+
+文档内容：
+{content}
+
+技术路线图：""",
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
     }
 
