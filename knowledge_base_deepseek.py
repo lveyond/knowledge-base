@@ -604,17 +604,34 @@ def get_model_path(model_name: str = "BAAI/bge-small-zh-v1.5") -> str:
             snapshots_dir = os.path.join(cache_path, "snapshots")
             if os.path.exists(snapshots_dir):
                 try:
-                    # 获取所有快照版本
-                    snapshots = [d for d in os.listdir(snapshots_dir) 
-                                if os.path.isdir(os.path.join(snapshots_dir, d))]
+                    # 先尝试快速检查目录是否可访问，避免卡住
+                    if not os.access(snapshots_dir, os.R_OK):
+                        raise PermissionError("No read permission")
+                    
+                    # 使用 Path 对象，通常比 os.listdir 更安全，避免在大型目录上卡住
+                    from pathlib import Path
+                    snapshots_path = Path(snapshots_dir)
+                    # 使用 try-except 包裹 iterdir()，避免在某些文件系统上卡住
+                    try:
+                        snapshots = [d.name for d in snapshots_path.iterdir() 
+                                   if d.is_dir()]
+                    except (OSError, PermissionError):
+                        # 如果 iterdir() 失败，回退到 os.listdir，但限制数量
+                        try:
+                            all_items = os.listdir(snapshots_dir)
+                            snapshots = [d for d in all_items 
+                                       if os.path.isdir(os.path.join(snapshots_dir, d))]
+                        except (OSError, PermissionError):
+                            snapshots = []
+                    
                     if snapshots:
                         # 使用最新的快照
                         latest_snapshot = sorted(snapshots)[-1]
                         local_path = os.path.join(snapshots_dir, latest_snapshot)
                         if os.path.exists(local_path):
                             return local_path
-                except (OSError, PermissionError):
-                    pass  # 忽略访问错误，继续检查其他路径
+                except (OSError, PermissionError, Exception):
+                    pass  # 忽略所有错误，继续检查其他路径
         
         # 检查项目目录下的 models 文件夹
         project_model_path = os.path.join(".", "models", model_name.replace("/", "--"))

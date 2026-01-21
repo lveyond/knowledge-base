@@ -133,23 +133,44 @@ chmod +x scripts/run.sh
 knowledge-base/
 ├── knowledge_base_deepseek.py  # 主程序文件
 ├── download_model.py            # 模型下载脚本
-├── requirements.txt            # 依赖包列表
+├── pyproject.toml               # Poetry 项目配置文件
+├── poetry.lock                  # Poetry 锁定文件
+├── requirements.txt            # 依赖包列表（pip 方式）
 ├── requirements-minimal.txt    # 最小化依赖列表
 ├── README.md                   # 项目说明
+├── .streamlit/                 # Streamlit 配置目录
+│   └── config.toml             # Streamlit 配置文件
 ├── docs/                       # 文档目录
 │   ├── INSTALL.md             # 安装指南
 │   ├── MODEL_DOWNLOAD_GUIDE.md # 模型下载指南
 │   ├── API_KEY_STORAGE.md     # API密钥保存说明
 │   ├── API_TIMEOUT_FIX.md     # API超时问题解决
-│   └── SAVE_FEATURES.md       # 保存功能说明
+│   ├── POETRY_SETUP.md        # Poetry 使用说明
+│   ├── PACKAGING.md           # 打包说明
+│   ├── SAVE_FEATURES.md       # 保存功能说明
+│   └── VECTOR_DB_CLEANUP.md   # 向量数据库清理说明
 ├── scripts/                    # 脚本目录
 │   ├── install_dependencies.bat  # Windows安装脚本
 │   ├── install_dependencies.sh   # Linux/Mac安装脚本
 │   ├── run.bat                  # Windows启动脚本
-│   └── run.sh                   # Linux/Mac启动脚本
+│   ├── run.sh                   # Linux/Mac启动脚本
+│   ├── setup_poetry.bat         # Windows Poetry设置脚本
+│   ├── setup_poetry.sh          # Linux/Mac Poetry设置脚本
+│   ├── cleanup_vector_db.bat    # Windows向量数据库清理脚本
+│   ├── cleanup_vector_db.sh     # Linux/Mac向量数据库清理脚本
+│   ├── fix_dependencies.bat     # Windows依赖修复脚本
+│   ├── fix_dependencies.sh     # Linux/Mac依赖修复脚本
+│   ├── fix_chromadb.bat         # ChromaDB修复脚本
+│   ├── fix_zstandard_install.bat # zstandard安装修复脚本
+│   ├── force_fix_dependencies.bat # 强制修复依赖脚本
+│   └── README.md                # 脚本使用说明
+├── prompt_templates/           # Prompt模版目录
+│   ├── summary_templates.json  # 总结模版配置
+│   └── analysis_templates.json # 分析模版配置
 ├── models/                     # 本地模型存储目录（可选）
 │   └── BAAI--bge-small-zh-v1.5/  # 手动下载的模型文件
-└── chroma_db/                  # 向量数据库存储目录（自动生成）
+├── chroma_db/                  # 向量数据库存储目录（自动生成）
+└── saved_reports/              # 保存的报告目录（自动生成）
 ```
 
 ## ⚙️ 配置说明
