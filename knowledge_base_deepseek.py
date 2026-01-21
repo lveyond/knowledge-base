@@ -3319,6 +3319,87 @@ def main():
                     st.markdown(f"### 📊 数据分析结果（使用模版：{st.session_state.analysis_template_name}）")
                     st.write(st.session_state.analysis_result)
         
+        # 流程图生成功能
+        flowchart_gen_clicked = st.button("📐 制作流程图文件", use_container_width=True, key="flowchart_gen_btn")
+        
+        # 初始化session_state
+        if 'show_flowchart_gen' not in st.session_state:
+            st.session_state.show_flowchart_gen = False
+        
+        if flowchart_gen_clicked:
+            st.session_state.show_flowchart_gen = True
+        
+        # 处理流程图生成（在col2内）
+        if st.session_state.show_flowchart_gen:
+            with st.expander("📐 制作流程图文件", expanded=True):
+                st.markdown("""
+                **使用说明：**
+                1. 从左侧"批量总结"区域的总结报告中复制流程图部分的文本
+                2. 将文本粘贴到下方的文本框中
+                3. 点击"生成流程图"按钮
+                4. 系统会自动生成并下载 draw.io 格式的流程图文件
+                
+                **流程图格式要求：**
+                - 主要阶段使用方括号 `[]` 包裹，通过向下箭头 `↓` 连接
+                - 子任务通过向右箭头 `→` 连接
+                - 支持缩进表示层级关系
+                """)
+                
+                # 文本输入区域
+                flowchart_text = st.text_area(
+                    "流程图文本",
+                    height=300,
+                    placeholder="请粘贴流程图文本，例如：\n\n[阶段一]\n↓\n[阶段二]\n→ 子任务1 → 子任务2\n↓\n[阶段三]",
+                    help="从批量总结文本中复制流程图部分，粘贴到这里",
+                    key="flowchart_text_input"
+                )
+                
+                # 生成按钮
+                generate_flowchart_clicked = st.button(
+                    "🚀 生成流程图", 
+                    type="primary", 
+                    use_container_width=True,
+                    key="generate_flowchart_btn"
+                )
+                
+                if generate_flowchart_clicked:
+                    if not flowchart_text or not flowchart_text.strip():
+                        st.warning("请输入流程图文本")
+                    else:
+                        try:
+                            # 导入流程图转换函数
+                            from flowchart_to_drawio import convert_flowchart_to_drawio
+                            
+                            with st.spinner("正在生成流程图..."):
+                                # 转换为 draw.io XML
+                                xml_content = convert_flowchart_to_drawio(flowchart_text, None)
+                                
+                                # 生成文件名
+                                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                file_name = f"flowchart_{timestamp}.drawio"
+                                
+                                # 提供下载按钮
+                                st.success("✅ 流程图生成成功！")
+                                st.download_button(
+                                    label="📥 下载流程图文件",
+                                    data=xml_content,
+                                    file_name=file_name,
+                                    mime="application/xml",
+                                    use_container_width=True,
+                                    key=f"download_flowchart_{timestamp}"
+                                )
+                                
+                                # 显示预览提示
+                                st.info("💡 提示：下载后可以使用 [draw.io](https://app.diagrams.net/) 或 [diagrams.net](https://www.diagrams.net/) 打开文件进行编辑")
+                                
+                        except ImportError:
+                            st.error("无法导入流程图转换模块，请确保 flowchart_to_drawio.py 文件存在")
+                        except Exception as e:
+                            st.error(f"生成流程图时出错：{str(e)}")
+                            import traceback
+                            with st.expander("错误详情", expanded=False):
+                                st.code(traceback.format_exc(), language='python')
+        
         # 显示版权信息
         show_footer()
 
