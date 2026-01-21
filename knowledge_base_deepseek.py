@@ -1853,6 +1853,13 @@ def query_deepseek(prompt: str, api_key: str, model: str = "deepseek-chat", max_
                     time.sleep(2 ** attempt)
                     continue
                 return "DeepSeek服务器错误，请稍后重试"
+            elif response.status_code == 400:
+                # 检查是否是上下文长度超限错误
+                error_text = response.text.lower()
+                if "context" in error_text and ("length" in error_text or "exceeded" in error_text or "too long" in error_text):
+                    return "❌ 文档内容过长，超过了API的上下文窗口限制（64K tokens）。\n\n建议：\n1. 减少选择的文档数量\n2. 或者使用分块总结功能（如果可用）\n3. 或者先对每篇文档进行摘要，再总结摘要内容"
+                else:
+                    return f"API请求参数错误 (状态码: 400): {response.text[:200]}"
             else:
                 return f"API请求失败 (状态码: {response.status_code}): {response.text[:200]}"
                 
@@ -1942,13 +1949,15 @@ def generate_summary_deepseek(docs_dict: Dict[str, Any], api_key: str, specific_
             if filename in docs_dict:
                 content = docs_dict[filename]['content']
                 if isinstance(content, dict):
-                    content = "\n".join([f"{k}: {v[:1000]}" for k, v in content.items()])
+                    # 移除字段长度限制，让API自行处理
+                    content = "\n".join([f"{k}: {v}" for k, v in content.items()])
                 contents.append(f"文件: {filename}\n{content}")
     else:
         for filename, data in docs_dict.items():
             content = data['content']
             if isinstance(content, dict):
-                content = "\n".join([f"{k}: {v[:1000]}" for k, v in content.items()])
+                # 移除字段长度限制，让API自行处理
+                content = "\n".join([f"{k}: {v}" for k, v in content.items()])
             contents.append(f"文件: {filename}\n{content}")
     
     combined_content = "\n\n".join(contents)
@@ -1957,14 +1966,14 @@ def generate_summary_deepseek(docs_dict: Dict[str, Any], api_key: str, specific_
     template_data = get_template("summary", template_id)
     if template_data:
         template_str = template_data.get("template", "")
-        # 替换模版中的占位符
-        prompt = template_str.format(content=combined_content[:12000])
+        # 替换模版中的占位符（移除字符限制，让API自行处理）
+        prompt = template_str.format(content=combined_content)
     else:
         # 如果模版不存在，使用默认模版
         prompt = f"""请根据以下文档内容，生成一份详细的总结报告：
 
 文档内容：
-{combined_content[:12000]}
+{combined_content}
 
 请生成包括以下部分的报告：
 1. 整体内容概述
