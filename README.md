@@ -334,7 +334,17 @@ A:
 
 ## 📄 许可证
 
-本项目仅供学习和研究使用。
+本项目采用双重许可证，**仅限个人和非商业使用**：
+
+- **MIT License (Non-Commercial)** - 查看 [LICENSE-MIT-NC](LICENSE-MIT-NC) 文件
+- **Apache License 2.0 (Non-Commercial)** - 查看 [LICENSE-APACHE-NC](LICENSE-APACHE-NC) 文件
+
+**使用限制：**
+- ✅ **允许**：个人学习、研究、教育用途
+- ✅ **允许**：非营利组织使用
+- ❌ **禁止**：任何商业用途（包括但不限于：商业产品、服务、销售、营利性企业内部使用等）
+
+如需商业使用，请联系版权所有者获取商业许可证。
 
 ## 🤝 贡献
 
@@ -349,4 +359,4 @@ A:
 - **GitHub**: [@lveyond](https://github.com/lveyond)
 - **QQ/WeChat**: 329613507
 
-本项目仅供学习和研究使用。
+本项目采用 MIT 和 Apache 2.0 双重许可证（仅限个人和非商业使用）。

@@ -3,6 +3,14 @@
 """
 符号化流程图转 draw.io 工具
 将大模型生成的符号化流程图转换为 draw.io 可识别的 XML 文件
+
+Copyright (c) 2026 吕滢
+
+Licensed under the MIT License (Non-Commercial) or Apache License 2.0 (Non-Commercial)
+See LICENSE-MIT-NC or LICENSE-APACHE-NC for details.
+
+This software is for NON-COMMERCIAL USE ONLY.
+For commercial use, please contact the copyright holder.
 """
 
 import re
