@@ -3889,27 +3889,28 @@ def main():
                             # 导入甘特图转换函数
                             from gantt_to_drawio import convert_gantt_to_drawio
                             
+                            # 转换为 draw.io XML
                             with st.spinner("正在生成甘特图..."):
-                                # 转换为 draw.io XML
                                 xml_content = convert_gantt_to_drawio(gantt_text, None)
-                                
-                                # 生成文件名
-                                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                                file_name = f"gantt_{timestamp}.drawio"
-                                
-                                # 提供下载按钮
-                                st.success("✅ 甘特图生成成功！")
-                                st.download_button(
-                                    label="📥 下载甘特图文件",
-                                    data=xml_content,
-                                    file_name=file_name,
-                                    mime="application/xml",
-                                    use_container_width=True,
-                                    key=f"download_gantt_{timestamp}"
-                                )
-                                
-                                # 显示预览提示
-                                st.info("💡 提示：下载后可以使用 [draw.io](https://app.diagrams.net/) 或 [diagrams.net](https://www.diagrams.net/) 打开文件进行编辑")
+                            
+                            # spinner结束后再显示成功信息和下载按钮
+                            # 生成文件名
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            file_name = f"gantt_{timestamp}.drawio"
+                            
+                            # 提供下载按钮
+                            st.success("✅ 甘特图生成成功！")
+                            st.download_button(
+                                label="📥 下载甘特图文件",
+                                data=xml_content,
+                                file_name=file_name,
+                                mime="application/xml",
+                                use_container_width=True,
+                                key=f"download_gantt_{timestamp}"
+                            )
+                            
+                            # 显示预览提示
+                            st.info("💡 提示：下载后可以使用 [draw.io](https://app.diagrams.net/) 或 [diagrams.net](https://www.diagrams.net/) 打开文件进行编辑")
                                 
                         except ImportError:
                             st.error("无法导入甘特图转换模块，请确保 gantt_to_drawio.py 文件存在")
