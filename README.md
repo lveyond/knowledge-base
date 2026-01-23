@@ -11,6 +11,7 @@
 - 🎯 **语义搜索**：基于向量相似度的文档检索
 - 💬 **对话历史**：保存问答历史记录
 - 📐 **流程图生成**：将符号化流程图文本转换为 draw.io 格式文件
+- 📊 **甘特图生成**：将项目进度甘特图表数据转换为 draw.io 格式文件
 
 ## 🚀 快速开始
 
@@ -136,6 +137,31 @@ chmod +x scripts/run.sh
 [阶段三]
 ```
 
+### 制作甘特图文件
+
+1. 准备项目进度甘特图表数据（表格格式）
+2. 使用命令行工具转换：
+   ```bash
+   python gantt_to_drawio.py -i gantt_data.txt -o output.drawio
+   ```
+3. 使用 [draw.io](https://app.diagrams.net/) 打开文件进行编辑
+
+**甘特图数据格式示例：**
+```
+任务ID	任务名称	开始时间	结束时间	工期(月)	前置任务	责任方/备注
+1	项目启动	M0	M1	2		
+1.1	项目立项	M0	M0+0.5	0.5		甲方、乙方
+1.2	需求调研	M0+0.5	M1	0.5	1.1	乙方
+```
+
+📖 **详细使用说明**：请查看 [docs/GANTT_CONVERTER.md](docs/GANTT_CONVERTER.md)
+
+📝 **Prompt模板**：使用AI生成甘特图数据时，可使用 [docs/GANTT_PROMPT_TEMPLATE.md](docs/GANTT_PROMPT_TEMPLATE.md) 中的模板
+
+💡 **快速开始**：
+- 使用示例数据测试：`python gantt_to_drawio.py -i example_gantt_data.txt -o test.drawio`
+- 使用简化模板：复制 `gantt_prompt_template.txt` 的内容，填写项目信息后发送给AI
+
 ## 🛠️ 技术栈
 
 - **前端框架**：Streamlit
@@ -153,6 +179,8 @@ chmod +x scripts/run.sh
 knowledge-base/
 ├── knowledge_base_deepseek.py  # 主程序文件
 ├── download_model.py            # 模型下载脚本
+├── flowchart_to_drawio.py       # 流程图转draw.io工具
+├── gantt_to_drawio.py          # 甘特图转draw.io工具
 ├── pyproject.toml               # Poetry 项目配置文件
 ├── poetry.lock                  # Poetry 锁定文件
 ├── requirements.txt            # 依赖包列表（pip 方式）
@@ -168,7 +196,9 @@ knowledge-base/
 │   ├── POETRY_SETUP.md        # Poetry 使用说明
 │   ├── PACKAGING.md           # 打包说明
 │   ├── SAVE_FEATURES.md       # 保存功能说明
-│   └── VECTOR_DB_CLEANUP.md   # 向量数据库清理说明
+│   ├── VECTOR_DB_CLEANUP.md   # 向量数据库清理说明
+│   ├── FLOWCHART_CONVERTER.md # 流程图转换工具说明
+│   └── GANTT_CONVERTER.md     # 甘特图转换工具说明
 ├── scripts/                    # 脚本目录
 │   ├── install_dependencies.bat  # Windows安装脚本
 │   ├── install_dependencies.sh   # Linux/Mac安装脚本

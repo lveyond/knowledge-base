@@ -35,6 +35,24 @@ def ensure_templates_dir():
     """确保模版目录存在"""
     os.makedirs(PROMPT_TEMPLATES_DIR, exist_ok=True)
 
+def is_default_template(template_type: str, template_id: str) -> bool:
+    """检查模版是否是默认模版（不可删除）
+    
+    Args:
+        template_type: 'summary' 或 'analysis'
+        template_id: 模版ID
+    
+    Returns:
+        如果是默认模版返回True，否则返回False
+    """
+    if template_type == "summary":
+        default_template_ids = ["default", "brief", "detailed", "roadmap", "gantt"]
+        return template_id in default_template_ids
+    elif template_type == "analysis":
+        default_template_ids = ["default", "statistical", "trend"]
+        return template_id in default_template_ids
+    return False
+
 def get_default_summary_templates() -> Dict[str, Dict[str, Any]]:
     """获取默认的总结模版"""
     return {
@@ -103,6 +121,78 @@ def get_default_summary_templates() -> Dict[str, Dict[str, Any]]:
 {content}
 
 技术路线图：""",
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        },
+        "gantt": {
+            "name": "项目进度甘特图模版",
+            "description": "生成项目进度甘特图表数据（表格格式）",
+            "template": """请根据以下文档内容，生成一份详细的项目进度甘特图表数据。
+
+文档内容：
+{content}
+
+## 输出格式要求
+
+请严格按照以下表格格式输出，使用制表符（Tab）分隔各列：
+
+```
+任务ID	任务名称	开始时间	结束时间	工期(月)	前置任务	责任方/备注
+```
+
+## 列说明
+
+1. **任务ID**：任务的唯一标识符
+   - 主要阶段：1, 2, 3, 4...
+   - 子任务：1.1, 1.2, 2.1, 2.2...
+   - 三级任务：1.1.1, 1.1.2...
+
+2. **任务名称**：任务的描述名称
+
+3. **开始时间**：使用 M+数字 格式
+   - M0：项目开始（第0个月）
+   - M1：第1个月
+   - M1+0.5 或 M1.5：第1.5个月
+   - 示例：M0, M0+0.5, M1, M1.5, M2
+
+4. **结束时间**：使用 M+数字 格式（必须大于等于开始时间）
+
+5. **工期(月)**：任务持续时间（可选，会自动计算）
+   - 可以是小数：0.5, 1, 1.5, 2, 2.5, 3
+
+6. **前置任务**：依赖的任务ID（可选）
+   - 多个任务用逗号或空格分隔：1.1, 1.2 或 2.1 2.2 2.3
+   - 如果无前置任务，留空
+
+7. **责任方/备注**：任务的责任人或备注信息（可选）
+   - 格式：责任方（备注说明）
+   - 示例：乙方（输出《需求分析说明书》）
+   - 示例：甲方、乙方
+   - 如果无备注，留空
+
+## 任务层级要求
+
+- **主要阶段（level 0）**：任务ID为单个数字（1, 2, 3...）
+- **二级任务（level 1）**：任务ID为 X.Y 格式（1.1, 1.2, 2.1...）
+- **三级任务（level 2）**：任务ID为 X.Y.Z 格式（1.1.1, 1.1.2...）
+
+## 时间规划要求
+
+1. **时间连续性**：确保任务时间顺序合理，前置任务完成后才能开始后续任务
+2. **时间重叠**：允许并行任务，但需明确标注前置依赖关系
+3. **时间跨度**：根据项目实际情况设定
+4. **里程碑**：主要阶段应设置明确的开始和结束时间
+
+## 注意事项
+
+1. **必须包含表头行**：第一行必须是列标题
+2. **使用制表符分隔**：列之间使用Tab键分隔，不要使用空格
+3. **时间格式统一**：统一使用 M+数字 格式
+4. **任务ID唯一性**：确保每个任务ID唯一
+5. **依赖关系正确**：前置任务ID必须存在于任务列表中
+6. **层级结构清晰**：主要阶段、二级任务、三级任务层次分明
+7. **备注信息完整**：尽量为每个任务提供责任方和备注信息
+
+请根据文档内容中的项目信息，生成完整的项目进度甘特图表数据。""",
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
     }
@@ -266,7 +356,7 @@ def save_template(template_type: str, template_id: str, name: str, description: 
     return save_templates(template_type, templates)
 
 def delete_template(template_type: str, template_id: str) -> bool:
-    """删除模版
+    """删除模版（默认模版不可删除）
     
     Args:
         template_type: 'summary' 或 'analysis'
@@ -275,6 +365,10 @@ def delete_template(template_type: str, template_id: str) -> bool:
     Returns:
         是否删除成功
     """
+    # 检查是否是默认模版，默认模版不可删除
+    if is_default_template(template_type, template_id):
+        return False
+    
     templates = load_templates(template_type)
     
     if template_id in templates:
@@ -2091,7 +2185,281 @@ def main():
         background-color: #558b2f !important;
         border-color: #558b2f !important;
     }
+    
+    /* 修复expander组件渲染时短暂显示keyboard_arrow_right文本的问题 */
+    /* 这是Streamlit内部Material Icons字体加载时的临时显示问题 */
+    /* 确保expander标题区域正确渲染 */
+    [data-testid="stExpander"] .streamlit-expanderHeader {
+        position: relative;
+        overflow: hidden;
+    }
+    
+    [data-testid="stExpander"] .streamlit-expanderHeader label {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    /* 预加载Material Icons字体，避免显示文本 */
+    @import url('https://fonts.googleapis.com/icon?family=Material+Icons');
+    
+    /* 确保Material Icons正确渲染 */
+    [data-testid="stExpander"] [class*="material-icons"],
+    [data-testid="stExpander"] .material-icons {
+        font-family: 'Material Icons' !important;
+        font-feature-settings: 'liga' !important;
+        text-rendering: optimizeLegibility !important;
+        -webkit-font-smoothing: antialiased !important;
+        font-style: normal !important;
+        font-weight: normal !important;
+        letter-spacing: normal !important;
+        text-transform: none !important;
+        display: inline-block !important;
+        white-space: nowrap !important;
+        word-wrap: normal !important;
+        direction: ltr !important;
+    }
+    
+    /* 骨架屏样式 */
+    .skeleton-screen {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: #ffffff;
+        z-index: 9999;
+        padding: 20px;
+        box-sizing: border-box;
+    }
+    
+    .skeleton-header {
+        height: 60px;
+        background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+        background-size: 200% 100%;
+        animation: skeleton-loading 1.5s ease-in-out infinite;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        max-width: 600px;
+    }
+    
+    .skeleton-container {
+        display: flex;
+        gap: 20px;
+        height: calc(100vh - 120px);
+    }
+    
+    .skeleton-sidebar {
+        width: 300px;
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 20px;
+    }
+    
+    .skeleton-sidebar-item {
+        height: 40px;
+        background: linear-gradient(90deg, #e9ecef 25%, #dee2e6 50%, #e9ecef 75%);
+        background-size: 200% 100%;
+        animation: skeleton-loading 1.5s ease-in-out infinite;
+        border-radius: 6px;
+        margin-bottom: 15px;
+    }
+    
+    .skeleton-sidebar-item.short {
+        width: 60%;
+    }
+    
+    .skeleton-sidebar-item.medium {
+        width: 80%;
+    }
+    
+    .skeleton-main {
+        flex: 1;
+        background: #ffffff;
+        border-radius: 8px;
+        padding: 20px;
+    }
+    
+    .skeleton-content-block {
+        height: 200px;
+        background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+        background-size: 200% 100%;
+        animation: skeleton-loading 1.5s ease-in-out infinite;
+        border-radius: 8px;
+        margin-bottom: 20px;
+    }
+    
+    .skeleton-content-line {
+        height: 20px;
+        background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+        background-size: 200% 100%;
+        animation: skeleton-loading 1.5s ease-in-out infinite;
+        border-radius: 4px;
+        margin-bottom: 10px;
+    }
+    
+    .skeleton-content-line.short {
+        width: 40%;
+    }
+    
+    .skeleton-content-line.medium {
+        width: 70%;
+    }
+    
+    .skeleton-content-line.long {
+        width: 100%;
+    }
+    
+    @keyframes skeleton-loading {
+        0% {
+            background-position: 200% 0;
+        }
+        100% {
+            background-position: -200% 0;
+        }
+    }
+    
+    .skeleton-screen.hidden {
+        opacity: 0;
+        transition: opacity 0.3s ease-out;
+        pointer-events: none;
+    }
     </style>
+    <script>
+    // 隐藏expander中可能显示的keyboard_arrow_right文本（Material Icons加载前的临时显示）
+    (function() {
+        function hideKeyboardArrowText() {
+            const expanders = document.querySelectorAll('[data-testid="stExpander"]');
+            expanders.forEach(expander => {
+                const elements = expander.querySelectorAll('*');
+                elements.forEach(element => {
+                    const text = element.textContent || element.innerText || '';
+                    // 如果元素只包含keyboard_arrow_right文本，隐藏它
+                    if (text.trim() === 'keyboard_arrow_right') {
+                        element.style.display = 'none';
+                        element.style.visibility = 'hidden';
+                        element.style.opacity = '0';
+                        element.style.width = '0';
+                        element.style.height = '0';
+                        element.style.overflow = 'hidden';
+                    }
+                });
+            });
+        }
+        
+        // 立即执行
+        hideKeyboardArrowText();
+        
+        // 页面加载完成后执行
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', hideKeyboardArrowText);
+        }
+        
+        // 使用MutationObserver监听DOM变化
+        if (typeof MutationObserver !== 'undefined') {
+            const observer = new MutationObserver(function(mutations) {
+                let shouldCheck = false;
+                mutations.forEach(function(mutation) {
+                    if (mutation.addedNodes.length > 0) {
+                        shouldCheck = true;
+                    }
+                });
+                if (shouldCheck) {
+                    setTimeout(hideKeyboardArrowText, 10);
+                }
+            });
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+        }
+    })();
+    
+    // 创建并显示骨架屏
+    function showSkeletonScreen() {
+        const skeleton = document.createElement('div');
+        skeleton.className = 'skeleton-screen';
+        skeleton.id = 'skeleton-screen';
+        skeleton.innerHTML = `
+            <div class="skeleton-header"></div>
+            <div class="skeleton-container">
+                <div class="skeleton-sidebar">
+                    <div class="skeleton-sidebar-item short"></div>
+                    <div class="skeleton-sidebar-item medium"></div>
+                    <div class="skeleton-sidebar-item"></div>
+                    <div class="skeleton-sidebar-item short"></div>
+                    <div class="skeleton-sidebar-item medium"></div>
+                    <div class="skeleton-sidebar-item"></div>
+                    <div class="skeleton-sidebar-item short"></div>
+                </div>
+                <div class="skeleton-main">
+                    <div class="skeleton-content-block"></div>
+                    <div class="skeleton-content-line long"></div>
+                    <div class="skeleton-content-line medium"></div>
+                    <div class="skeleton-content-line short"></div>
+                    <div class="skeleton-content-block"></div>
+                    <div class="skeleton-content-line long"></div>
+                    <div class="skeleton-content-line long"></div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(skeleton);
+    }
+    
+    // 隐藏骨架屏
+    function hideSkeletonScreen() {
+        const skeleton = document.getElementById('skeleton-screen');
+        if (skeleton) {
+            skeleton.classList.add('hidden');
+            setTimeout(() => {
+                skeleton.remove();
+            }, 300);
+        }
+    }
+    
+    // 页面加载时显示骨架屏
+    (function() {
+        // 立即显示骨架屏
+        showSkeletonScreen();
+        
+        // 检测Streamlit应用是否已加载
+        function checkStreamlitLoaded() {
+            const stApp = document.querySelector('[data-testid="stApp"]');
+            const mainContent = document.querySelector('[data-testid="stAppViewContainer"]');
+            
+            // 如果Streamlit应用已加载且主要内容已渲染
+            if (stApp && mainContent && mainContent.children.length > 0) {
+                // 等待一小段时间确保内容完全渲染
+                setTimeout(function() {
+                    hideSkeletonScreen();
+                }, 300);
+                return true;
+            }
+            return false;
+        }
+        
+        // 立即检查一次
+        if (!checkStreamlitLoaded()) {
+            // 如果还没加载，监听DOM变化
+            const observer = new MutationObserver(function(mutations, obs) {
+                if (checkStreamlitLoaded()) {
+                    obs.disconnect();
+                }
+            });
+            
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+            
+            // 超时保护：最多等待3秒
+            setTimeout(function() {
+                observer.disconnect();
+                hideSkeletonScreen();
+            }, 3000);
+        }
+    })();
+    </script>
     """, unsafe_allow_html=True)
     
     st.set_page_config(
@@ -2206,6 +2574,7 @@ def main():
         if 'api_max_retries' not in st.session_state:
             st.session_state.api_max_retries = 3
         
+        # API 超时和重试配置（高级设置）
         with st.expander("⚙️ 高级设置（网络问题时可调整）", expanded=False):
             timeout_seconds = st.slider(
                 "请求超时时间（秒）",
@@ -2875,7 +3244,7 @@ def main():
             if 'selected_summary_template' not in st.session_state:
                 st.session_state.selected_summary_template = "default"
             
-            col_template1, col_template2, col_template3 = st.columns([4, 1, 1])
+            col_template1, col_template1_btn, col_template2, col_template3 = st.columns([3, 1, 1, 1])
             with col_template1:
                 selected_template_display = st.selectbox(
                     "选择Prompt模版",
@@ -2884,6 +3253,18 @@ def main():
                     help="选择用于生成总结的Prompt模版"
                 )
                 st.session_state.selected_summary_template = template_options[selected_template_display]
+            
+            with col_template1_btn:
+                # 刷新按钮
+                st.markdown("<div style='height: 27px;'></div>", unsafe_allow_html=True)
+                if st.button("🔄 刷新", use_container_width=True, key="refresh_summary_template_btn", help="刷新模板列表以获取最新模板"):
+                    # 重新加载模板
+                    summary_templates = load_templates("summary")
+                    template_options = {f"{t['name']} ({tid})": tid for tid, t in summary_templates.items()}
+                    # 如果当前选中的模板不存在，重置为default
+                    if st.session_state.selected_summary_template not in template_options.values():
+                        st.session_state.selected_summary_template = "default"
+                    st.rerun()
             
             with col_template2:
                 # 添加占位符以对齐selectbox的label和help icon
@@ -2895,7 +3276,7 @@ def main():
                 # 添加占位符以对齐selectbox的label和help icon
                 st.markdown("<div style='height: 27px;'></div>", unsafe_allow_html=True)
                 # 检查选中的模版是否可以删除（默认模版不可删除）
-                can_delete = st.session_state.selected_summary_template != "default"
+                can_delete = not is_default_template("summary", st.session_state.selected_summary_template)
                 if st.button("🗑️ 删除", use_container_width=True, key="delete_summary_template_btn", disabled=not can_delete):
                     if delete_template("summary", st.session_state.selected_summary_template):
                         st.success("✅ 模版已删除")
@@ -3140,6 +3521,8 @@ def main():
         if search_clicked:
             # 清除高级功能显示状态
             st.session_state.show_data_analysis = False
+            st.session_state.show_flowchart_gen = False
+            st.session_state.show_gantt_gen = False
             
             if not question:
                 st.warning("请输入问题")
@@ -3232,7 +3615,11 @@ def main():
             st.session_state.show_data_analysis = False
         
         if data_analysis_clicked:
+            # 先关闭其他功能
+            st.session_state.show_flowchart_gen = False
+            st.session_state.show_gantt_gen = False
             st.session_state.show_data_analysis = True
+            st.rerun()  # 立即刷新页面以确保状态生效
         
         # 处理数据分析（在col2内，使用容器组织结果）
         if st.session_state.show_data_analysis:
@@ -3251,7 +3638,7 @@ def main():
                     analysis_templates = load_templates("analysis")
                     analysis_template_options = {f"{t['name']} ({tid})": tid for tid, t in analysis_templates.items()}
                     
-                    col_analysis_template1, col_analysis_template2, col_analysis_template3 = st.columns([4, 1, 1])
+                    col_analysis_template1, col_analysis_template1_btn, col_analysis_template2, col_analysis_template3 = st.columns([3, 1, 1, 1])
                     with col_analysis_template1:
                         selected_analysis_template_display = st.selectbox(
                             "选择Prompt模版",
@@ -3261,6 +3648,18 @@ def main():
                             key="analysis_template_select"
                         )
                         st.session_state.selected_analysis_template = analysis_template_options[selected_analysis_template_display]
+                    
+                    with col_analysis_template1_btn:
+                        # 刷新按钮
+                        st.markdown("<div style='height: 27px;'></div>", unsafe_allow_html=True)
+                        if st.button("🔄 刷新", use_container_width=True, key="refresh_analysis_template_btn", help="刷新模板列表以获取最新模板"):
+                            # 重新加载模板
+                            analysis_templates = load_templates("analysis")
+                            analysis_template_options = {f"{t['name']} ({tid})": tid for tid, t in analysis_templates.items()}
+                            # 如果当前选中的模板不存在，重置为default
+                            if st.session_state.selected_analysis_template not in analysis_template_options.values():
+                                st.session_state.selected_analysis_template = "default"
+                            st.rerun()
                     
                     with col_analysis_template2:
                         # 添加占位符以对齐selectbox的label和help icon
@@ -3272,7 +3671,7 @@ def main():
                         # 添加占位符以对齐selectbox的label和help icon
                         st.markdown("<div style='height: 27px;'></div>", unsafe_allow_html=True)
                         # 检查选中的模版是否可以删除（默认模版不可删除）
-                        can_delete_analysis = st.session_state.selected_analysis_template != "default"
+                        can_delete_analysis = not is_default_template("analysis", st.session_state.selected_analysis_template)
                         if st.button("🗑️ 删除", use_container_width=True, key="delete_analysis_template_btn", disabled=not can_delete_analysis):
                             if delete_template("analysis", st.session_state.selected_analysis_template):
                                 st.success("✅ 模版已删除")
@@ -3355,7 +3754,11 @@ def main():
             st.session_state.show_flowchart_gen = False
         
         if flowchart_gen_clicked:
+            # 先关闭其他功能
+            st.session_state.show_data_analysis = False
+            st.session_state.show_gantt_gen = False
             st.session_state.show_flowchart_gen = True
+            st.rerun()  # 立即刷新页面以确保状态生效
         
         # 处理流程图生成（在col2内）
         if st.session_state.show_flowchart_gen:
@@ -3424,6 +3827,94 @@ def main():
                             st.error("无法导入流程图转换模块，请确保 flowchart_to_drawio.py 文件存在")
                         except Exception as e:
                             st.error(f"生成流程图时出错：{str(e)}")
+                            import traceback
+                            with st.expander("错误详情", expanded=False):
+                                st.code(traceback.format_exc(), language='python')
+        
+        # 甘特图生成功能
+        gantt_gen_clicked = st.button("📅 制作甘特图文件", use_container_width=True, key="gantt_gen_btn")
+        
+        # 初始化session_state
+        if 'show_gantt_gen' not in st.session_state:
+            st.session_state.show_gantt_gen = False
+        
+        if gantt_gen_clicked:
+            # 先关闭其他功能
+            st.session_state.show_data_analysis = False
+            st.session_state.show_flowchart_gen = False
+            st.session_state.show_gantt_gen = True
+            st.rerun()  # 立即刷新页面以确保状态生效
+        
+        # 处理甘特图生成（在col2内）
+        if st.session_state.show_gantt_gen:
+            with st.expander("📅 制作甘特图文件", expanded=True):
+                st.markdown("""
+                **使用说明：**
+                1. 准备项目进度甘特图表数据（表格格式）
+                2. 将表格数据粘贴到下方的文本框中
+                3. 点击"生成甘特图"按钮
+                4. 系统会自动生成并下载 draw.io 格式的甘特图文件
+                
+                **甘特图数据格式要求：**
+                - 表格格式，使用制表符（Tab）分隔各列
+                - 必须包含表头行：任务ID、任务名称、开始时间、结束时间、工期(月)、前置任务、责任方/备注
+                - 时间格式：M0, M1, M1+0.5, M1.5 等
+                - 任务ID支持层级结构：1, 1.1, 1.2, 2.1 等
+                
+                **提示：** 可以使用AI生成甘特图数据，在"批量总结"功能中选择"项目进度甘特图模版"，系统会根据文档内容自动生成符合格式要求的甘特图表数据
+                """)
+                
+                # 文本输入区域
+                gantt_text = st.text_area(
+                    "甘特图表数据",
+                    height=400,
+                    placeholder="任务ID	任务名称	开始时间	结束时间	工期(月)	前置任务	责任方/备注\n1	项目启动	M0	M1	2		\n1.1	项目立项	M0	M0+0.5	0.5		甲方、乙方\n1.2	需求调研	M0+0.5	M1	0.5	1.1	乙方",
+                    help="粘贴甘特图表数据（表格格式），支持制表符或空格分隔",
+                    key="gantt_text_input"
+                )
+                
+                # 生成按钮
+                generate_gantt_clicked = st.button(
+                    "🚀 生成甘特图", 
+                    type="primary", 
+                    use_container_width=True,
+                    key="generate_gantt_btn"
+                )
+                
+                if generate_gantt_clicked:
+                    if not gantt_text or not gantt_text.strip():
+                        st.warning("请输入甘特图表数据")
+                    else:
+                        try:
+                            # 导入甘特图转换函数
+                            from gantt_to_drawio import convert_gantt_to_drawio
+                            
+                            with st.spinner("正在生成甘特图..."):
+                                # 转换为 draw.io XML
+                                xml_content = convert_gantt_to_drawio(gantt_text, None)
+                                
+                                # 生成文件名
+                                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                file_name = f"gantt_{timestamp}.drawio"
+                                
+                                # 提供下载按钮
+                                st.success("✅ 甘特图生成成功！")
+                                st.download_button(
+                                    label="📥 下载甘特图文件",
+                                    data=xml_content,
+                                    file_name=file_name,
+                                    mime="application/xml",
+                                    use_container_width=True,
+                                    key=f"download_gantt_{timestamp}"
+                                )
+                                
+                                # 显示预览提示
+                                st.info("💡 提示：下载后可以使用 [draw.io](https://app.diagrams.net/) 或 [diagrams.net](https://www.diagrams.net/) 打开文件进行编辑")
+                                
+                        except ImportError:
+                            st.error("无法导入甘特图转换模块，请确保 gantt_to_drawio.py 文件存在")
+                        except Exception as e:
+                            st.error(f"生成甘特图时出错：{str(e)}")
                             import traceback
                             with st.expander("错误详情", expanded=False):
                                 st.code(traceback.format_exc(), language='python')
