@@ -15,7 +15,7 @@ For commercial use, please contact the copyright holder.
 import streamlit as st
 import os
 import glob
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import tempfile
 from pathlib import Path
 import json
@@ -485,6 +485,54 @@ def save_embedding_model_config(model_name: str) -> bool:
     except Exception as e:
         if 'st' in globals():
             st.error(f"保存嵌入模型配置失败: {str(e)}")
+        return False
+
+def load_web_search_config() -> bool:
+    """从本地配置文件加载联网搜索配置
+    
+    Returns:
+        是否启用联网搜索，默认为 False
+    """
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                return config.get("enable_web_search", False)
+    except Exception:
+        pass
+    return False
+
+def save_web_search_config(enable: bool) -> bool:
+    """保存联网搜索配置到本地配置文件
+    
+    Args:
+        enable: 是否启用联网搜索
+    
+    Returns:
+        是否保存成功
+    """
+    try:
+        # 读取现有配置
+        config = {}
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            except:
+                pass
+        
+        # 更新联网搜索配置
+        config["enable_web_search"] = enable
+        config["web_search_updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # 保存配置
+        os.makedirs(os.path.dirname(CONFIG_FILE) if os.path.dirname(CONFIG_FILE) else ".", exist_ok=True)
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        if 'st' in globals():
+            st.error(f"保存联网搜索配置失败: {str(e)}")
         return False
 
 def download_model(model_name: str, progress_callback=None) -> bool:
@@ -2057,8 +2105,128 @@ def search_similar_documents(vectorstore, query: str, k: int = 4):
     except:
         return []
 
-def answer_with_deepseek(question: str, vectorstore, docs_dict: Dict[str, Any], api_key: str):
-    """使用DeepSeek回答问题"""
+def check_web_search_available() -> Tuple[bool, str]:
+    """检查联网搜索库是否可用
+    
+    Returns:
+        (是否可用, 错误信息或成功信息)
+    """
+    try:
+        # 优先尝试使用新的 ddgs 库
+        try:
+            from ddgs import DDGS
+            # 尝试创建一个实例来验证库是否正常工作
+            with DDGS() as ddgs:
+                pass
+            return True, "ddgs 库已安装并可用"
+        except ImportError:
+            # 如果新库不存在，尝试使用旧的 duckduckgo_search 库
+            try:
+                from duckduckgo_search import DDGS
+                import warnings
+                # 忽略重命名警告
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=RuntimeWarning)
+                    with DDGS() as ddgs:
+                        pass
+                return True, "duckduckgo-search 库已安装（建议升级到 ddgs: pip install ddgs）"
+            except ImportError:
+                return False, "未安装搜索库，请运行: pip install ddgs（或 pip install duckduckgo-search）"
+    except Exception as e:
+        return False, f"搜索库存在问题: {str(e)}"
+
+def web_search(query: str, max_results: int = 3) -> tuple[str, List[Dict[str, str]]]:
+    """执行联网搜索
+    
+    Args:
+        query: 搜索查询
+        max_results: 最大结果数量
+    
+    Returns:
+        (搜索结果文本, 结构化搜索结果列表)
+        搜索结果文本：用于AI回答的文本格式
+        结构化结果列表：包含title, url, snippet的字典列表，用于显示参考来源
+    """
+    try:
+        # 优先尝试使用新的 ddgs 库
+        try:
+            from ddgs import DDGS
+            
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=max_results))
+                
+                if results:
+                    search_results_text = []
+                    structured_results = []
+                    for i, result in enumerate(results, 1):
+                        title = result.get('title', '')
+                        snippet = result.get('body', '')
+                        url = result.get('href', '')
+                        search_results_text.append(f"[{i}] {title}\n来源: {url}\n摘要: {snippet}")
+                        structured_results.append({
+                            'title': title,
+                            'url': url,
+                            'snippet': snippet
+                        })
+                    
+                    return "\n\n".join(search_results_text), structured_results
+                else:
+                    return "", []  # 没有搜索结果
+        except ImportError:
+            # 如果新库不存在，尝试使用旧的 duckduckgo_search 库
+            try:
+                from duckduckgo_search import DDGS
+                import warnings
+                
+                # 忽略重命名警告
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=RuntimeWarning)
+                    with DDGS() as ddgs:
+                        results = list(ddgs.text(query, max_results=max_results))
+                        
+                        if results:
+                            search_results_text = []
+                            structured_results = []
+                            for i, result in enumerate(results, 1):
+                                title = result.get('title', '')
+                                snippet = result.get('body', '')
+                                url = result.get('href', '')
+                                search_results_text.append(f"[{i}] {title}\n来源: {url}\n摘要: {snippet}")
+                                structured_results.append({
+                                    'title': title,
+                                    'url': url,
+                                    'snippet': snippet
+                                })
+                            
+                            return "\n\n".join(search_results_text), structured_results
+                        else:
+                            return "", []  # 没有搜索结果
+            except ImportError:
+                # 如果两个库都不存在，返回空（错误提示已在调用前显示）
+                return "", []
+            except Exception as e:
+                # 旧库调用出错
+                error_msg = str(e)
+                return f"联网搜索时出错: {error_msg}", []
+        except Exception as e:
+            # 新库调用出错
+            error_msg = str(e)
+            return f"联网搜索时出错: {error_msg}", []
+    except Exception as e:
+        return f"联网搜索功能出错: {str(e)}", []
+
+def answer_with_deepseek(question: str, vectorstore, docs_dict: Dict[str, Any], api_key: str, enable_web_search: bool = False, web_search_results: str = "", web_search_refs: List[Dict[str, str]] = None):
+    """使用DeepSeek回答问题
+    
+    Args:
+        question: 用户问题
+        vectorstore: 向量数据库
+        docs_dict: 文档字典
+        api_key: API密钥
+        enable_web_search: 是否启用联网搜索
+        web_search_results: 联网搜索结果文本（如果已在外部执行搜索，可以传入）
+        web_search_refs: 联网搜索结果的结构化数据（用于显示参考来源）
+    """
     # 检索相关文档片段
     similar_docs = search_similar_documents(vectorstore, question)
     
@@ -2073,11 +2241,39 @@ def answer_with_deepseek(question: str, vectorstore, docs_dict: Dict[str, Any], 
             context_parts.append(f"来自文档 '{source}' 的内容:\n{content}")
         context = "\n\n".join(context_parts)
     
+    # 如果启用联网搜索且未传入搜索结果，先尝试搜索（兼容旧代码）
+    if enable_web_search and not web_search_results:
+        try:
+            web_search_results, _ = web_search(question, max_results=3)
+        except Exception as e:
+            web_search_results = f"联网搜索时出错: {str(e)}"
+    
     # 构建提示
-    prompt = f"""基于以下文档内容，请回答这个问题：{question}
+    if enable_web_search and web_search_results:
+        # 有联网搜索结果
+        prompt = f"""基于以下文档内容和联网搜索结果，请回答这个问题：{question}
 
 相关文档内容：
-{context[:8000]}  # 限制上下文长度
+{context[:6000]}
+
+联网搜索结果：
+{web_search_results[:2000]}
+
+请优先基于文档内容回答，如果文档中没有相关信息，可以参考联网搜索结果。请在回答中明确说明是否使用了联网搜索结果。"""
+    elif enable_web_search and not web_search_results:
+        # 启用了联网搜索但没有结果
+        prompt = f"""基于以下文档内容，请回答这个问题：{question}
+
+相关文档内容：
+{context[:8000]}
+
+注意：已启用联网搜索功能，但未能获取到相关的联网搜索结果。请基于文档内容回答，如果文档中没有相关信息，请明确说明。"""
+    else:
+        # 未启用联网搜索
+        prompt = f"""基于以下文档内容，请回答这个问题：{question}
+
+相关文档内容：
+{context[:8000]}
 
 请基于上述文档内容回答，如果文档中没有相关信息，请明确说明。"""
 
@@ -2497,6 +2693,9 @@ def main():
         st.session_state.is_creating_vectorstore = False
     if 'embedding_model' not in st.session_state:
         st.session_state.embedding_model = load_embedding_model_config()
+    # 初始化联网搜索配置
+    if 'enable_web_search' not in st.session_state:
+        st.session_state.enable_web_search = load_web_search_config()
     
     # 侧边栏
     with st.sidebar:
@@ -3519,14 +3718,42 @@ def main():
                 st.rerun()
         
         with col_c:
-            if st.button("💡 示例问题", use_container_width=True):
-                examples = [
-                    "总结所有文档的核心要点",
-                    "提取文档中的关键数据",
-                    "列出所有提到的重要日期",
-                    "各文档之间的关联是什么？"
-                ]
-                st.session_state.question_input = st.session_state.get("question_input", "") + examples[0]
+            # 联网搜索配置（仅用于智能问答）
+            if 'enable_web_search' not in st.session_state:
+                st.session_state.enable_web_search = load_web_search_config()
+            
+            # 检查联网搜索库是否可用
+            web_search_available, check_message = check_web_search_available()
+            
+            # 如果库未安装但之前启用了联网搜索，自动禁用
+            if not web_search_available and st.session_state.enable_web_search:
+                st.session_state.enable_web_search = False
+                save_web_search_config(False)
+            
+            enable_web_search = st.checkbox(
+                "🌐 联网搜索",
+                value=st.session_state.enable_web_search,
+                disabled=not web_search_available,
+                help="启用后，当本地文档无法回答问题时，会自动搜索互联网获取相关信息。" + 
+                     ("" if web_search_available else "⚠️ 需要先安装 ddgs 库（pip install ddgs，推荐）或 duckduckgo-search（旧版）"),
+                key="web_search_checkbox_qa"
+            )
+            
+            # 如果库未安装，显示详细提示
+            if not web_search_available:
+                st.caption(f"⚠️ {check_message}")
+                st.caption("💡 推荐安装: `pip install ddgs`（新版本，推荐）")
+                st.caption("💡 或安装旧版: `pip install duckduckgo-search`（会显示警告）")
+                st.caption("💡 安装后请刷新页面（按 F5 或点击浏览器刷新按钮）")
+            
+            # 保存到 session state 和配置文件
+            if enable_web_search != st.session_state.enable_web_search:
+                st.session_state.enable_web_search = enable_web_search
+                if save_web_search_config(enable_web_search):
+                    if enable_web_search:
+                        st.success("✅ 已启用联网搜索功能（仅用于智能问答）")
+                    else:
+                        st.info("ℹ️ 已禁用联网搜索功能")
         
         # 处理搜索答案的逻辑（移到列布局外，使内容占据全宽）
         if search_clicked:
@@ -3547,13 +3774,65 @@ def main():
                 retry_info = st.session_state.get('api_max_retries', 3)
                 st.info(f"⏱️ 超时设置: {timeout_info}秒 | 重试次数: {retry_info}次 | 如遇超时可在侧边栏调整")
                 
-                with st.spinner(f"正在思考...（超时时间: {timeout_info}秒）"):
-                    answer = answer_with_deepseek(
-                        question, 
-                        st.session_state.vectorstore, 
-                        st.session_state.docs, 
-                        api_key
-                    )
+                # 获取联网搜索配置
+                enable_web_search = st.session_state.get('enable_web_search', False)
+                
+                # 检查联网搜索库是否安装
+                web_search_available, check_message = check_web_search_available()
+                if enable_web_search and not web_search_available:
+                    st.warning(f"⚠️ {check_message}")
+                    st.info("💡 推荐运行: `pip install ddgs`（新版本）或 `pip install duckduckgo-search`（旧版本）")
+                    enable_web_search = False  # 禁用联网搜索，因为库未安装
+                
+                # 显示搜索状态（仅在spinner外部显示，避免重复显示）
+                search_status_placeholder = None
+                if enable_web_search and web_search_available:
+                    search_status_placeholder = st.empty()
+                    search_status_placeholder.info("🌐 已启用联网搜索，正在搜索相关信息...")
+                
+                # 使用容器隔离智能问答结果，避免覆盖高级功能
+                qa_result_container = st.container()
+                
+                with qa_result_container:
+                    with st.spinner(f"正在思考...（超时时间: {timeout_info}秒）"):
+                        # 执行搜索并获取结果
+                        web_search_results = ""
+                        web_search_refs = []
+                        web_search_status = ""
+                        if enable_web_search and web_search_available:
+                            try:
+                                web_search_results, web_search_refs = web_search(question, max_results=3)
+                                # 检查搜索结果：如果有内容且不是错误信息，才算成功
+                                if web_search_results and not web_search_results.startswith("联网搜索时出错") and not web_search_results.startswith("联网搜索功能出错"):
+                                    web_search_status = "✅ 已获取联网搜索结果"
+                                elif web_search_results.startswith("联网搜索时出错") or web_search_results.startswith("联网搜索功能出错"):
+                                    web_search_status = f"⚠️ {web_search_results}"
+                                else:
+                                    # 空字符串表示搜索执行了但没有找到结果
+                                    web_search_status = "ℹ️ 联网搜索未找到相关结果"
+                            except Exception as e:
+                                web_search_status = f"⚠️ 联网搜索出错: {str(e)}"
+                        
+                        answer = answer_with_deepseek(
+                            question, 
+                            st.session_state.vectorstore, 
+                            st.session_state.docs, 
+                            api_key,
+                            enable_web_search=enable_web_search,
+                            web_search_results=web_search_results,
+                            web_search_refs=web_search_refs if web_search_refs else None
+                        )
+                    
+                    # 搜索完成后清除搜索状态提示，并显示搜索结果状态
+                    if search_status_placeholder is not None:
+                        search_status_placeholder.empty()
+                        if web_search_status:
+                            if "✅" in web_search_status:
+                                search_status_placeholder.success(web_search_status)
+                            elif "⚠️" in web_search_status:
+                                search_status_placeholder.warning(web_search_status)
+                            else:
+                                search_status_placeholder.info(web_search_status)
                     
                     # 保存到历史
                     st.session_state.chat_history.append((question, answer))
@@ -3603,20 +3882,45 @@ def main():
                             5. ⏰ **稍后重试**：可能是DeepSeek服务器繁忙，稍后再试
                             """)
                     
-                    # 显示检索来源
-                    if st.session_state.vectorstore:
-                        with st.expander("查看参考来源"):
+                    # 显示检索来源（包含本地文档和联网搜索结果）
+                    with st.expander("查看参考来源", expanded=False):
+                        source_count = 0
+                        
+                        # 显示本地文档来源
+                        if st.session_state.vectorstore:
                             similar_docs = search_similar_documents(
                                 st.session_state.vectorstore, 
                                 question
                             )
                             for i, (content, source) in enumerate(similar_docs[:3], 1):
-                                st.markdown(f"**来源 {i} - {source}**")
+                                source_count += 1
+                                st.markdown(f"**来源 {source_count} - 📄 {source}**")
                                 st.caption(content[:300] + "...")
+                                if i < len(similar_docs[:3]):
+                                    st.markdown("---")
+                        
+                        # 显示联网搜索结果来源
+                        if web_search_refs:
+                            if source_count > 0:
+                                st.markdown("---")
+                            for i, ref in enumerate(web_search_refs, 1):
+                                source_count += 1
+                                title = ref.get('title', '无标题')
+                                url = ref.get('url', '')
+                                snippet = ref.get('snippet', '')
+                                st.markdown(f"**来源 {source_count} - 🌐 {title}**")
+                                if url:
+                                    st.markdown(f"🔗 [{url}]({url})")
+                                if snippet:
+                                    st.caption(snippet[:300] + ("..." if len(snippet) > 300 else ""))
+                                if i < len(web_search_refs):
+                                    st.markdown("---")
         
-        # 高级功能（在col2内，确保布局正确）
+        # 高级功能（使用容器隔离，避免被智能问答结果覆盖）
         st.markdown("---")
-        st.subheader("🎯 高级功能")
+        advanced_features_container = st.container()
+        with advanced_features_container:
+            st.subheader("🎯 高级功能")
         
         # 数据分析按钮（语义搜索功能已移除，因为与"查看参考来源"功能重复）
         data_analysis_clicked = st.button("📊 数据分析", use_container_width=True, key="data_analysis_btn")

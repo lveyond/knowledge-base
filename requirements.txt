@@ -32,3 +32,9 @@ requests>=2.31.0
 torch>=2.0.0
 transformers>=4.35.0
 
+# 联网搜索功能（可选，用于智能问答的联网搜索）
+# 注意：duckduckgo-search 已重命名为 ddgs，优先使用新库
+ddgs>=9.0.0
+# 如果新库不可用，可以回退到旧库（会显示警告）
+# duckduckgo-search>=6.0.0
+
