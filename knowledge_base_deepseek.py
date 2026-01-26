@@ -1021,10 +1021,18 @@ def load_existing_vector_store(folder_path: str = None, progress_callback=None):
             progress_callback(50, "🔄 正在加载向量数据库...")
         
         # 从持久化目录加载
-        vectorstore = Chroma(
-            persist_directory=db_path,
-            embedding_function=embeddings
-        )
+        try:
+            vectorstore = Chroma(
+                persist_directory=db_path,
+                embedding_function=embeddings
+            )
+        except Exception as load_error:
+            # 加载失败，可能是数据库损坏或版本不兼容
+            error_msg = str(load_error).lower()
+            print(f"❌ 向量数据库加载失败: {str(load_error)}")
+            if progress_callback:
+                progress_callback(100, "❌ 向量数据库加载失败")
+            return None
         
         # 验证向量数据库是否可用（使用更温和的验证方法）
         # 只对真正的schema错误或维度不匹配错误进行清理，其他错误只记录但不清理
@@ -1034,8 +1042,9 @@ def load_existing_vector_store(folder_path: str = None, progress_callback=None):
             
             # 如果文档数量为0，可能是空数据库，但不算损坏
             if doc_count == 0:
+                print("⚠️ 向量数据库为空，需要重新创建")
                 if progress_callback:
-                    progress_callback(100, "⚠️ 向量数据库为空，将重新创建...")
+                    progress_callback(100, "⚠️ 向量数据库为空")
                 return None
             
             # 尝试进行一次简单的查询来验证数据库是否真的可用
@@ -1064,9 +1073,10 @@ def load_existing_vector_store(folder_path: str = None, progress_callback=None):
                 else:
                     # 其他查询错误，可能是临时性问题，不清理数据库，但返回None让调用者重新创建
                     # 记录错误但不清理，因为可能是临时性问题
-                    print(f"⚠️ 向量数据库查询失败（可能是临时性问题）: {str(query_error)}")
+                    print(f"❌ 向量数据库查询失败: {str(query_error)}")
+                    print(f"   提示：如果文档未变化，请检查数据库是否损坏，或点击'重新加载'按钮强制重新创建")
                     if progress_callback:
-                        progress_callback(100, "⚠️ 向量数据库查询失败，将重新创建...")
+                        progress_callback(100, "❌ 向量数据库查询失败")
                     return None
                     
         except Exception as verify_error:
@@ -1088,9 +1098,10 @@ def load_existing_vector_store(folder_path: str = None, progress_callback=None):
             else:
                 # 其他错误（可能是临时性问题），不清理数据库，只返回None
                 # 记录错误但不清理，因为可能是临时性问题
-                print(f"⚠️ 向量数据库验证失败（可能是临时性问题）: {str(verify_error)}")
+                print(f"❌ 向量数据库验证失败: {str(verify_error)}")
+                print(f"   提示：如果文档未变化，请检查数据库是否损坏，或点击'重新加载'按钮强制重新创建")
                 if progress_callback:
-                    progress_callback(100, "⚠️ 向量数据库验证失败，将重新创建...")
+                    progress_callback(100, "❌ 向量数据库验证失败")
             return None
         
         if progress_callback:
@@ -1315,7 +1326,7 @@ def check_docs_changed(docs_dict: Dict[str, Any], folder_path: str) -> bool:
             # 文档未变化且数据库文件存在，返回 False（文档未变化）
             # 数据库的可用性由 load_existing_vector_store 来验证
             # 如果数据库损坏，load_existing_vector_store 会返回 None，界面会提示但不会自动重新创建
-            print("[OK] 文档未变化，可以使用已有向量数据库")
+            print("[INFO] 文档未变化，数据库文件存在（可用性待验证）")
             return False
         except Exception as e:
             print(f"[WARN] 验证数据库文件时出错: {str(e)}")

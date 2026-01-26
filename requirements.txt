@@ -14,6 +14,9 @@ langchain>=0.1.0
 langchain-community>=0.0.20,<0.3.23
 langchain-core>=0.1.0
 langchain-text-splitters>=0.2.0
+# 新的独立包（推荐使用，避免弃用警告）
+langchain-huggingface>=0.0.1
+langchain-chroma>=0.1.0
 # langsmith 版本限制（langchain-community 0.3.22 要求 < 0.4）
 langsmith>=0.1.125,<0.4
 
