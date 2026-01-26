@@ -1033,7 +1033,9 @@ def load_existing_vector_store(folder_path: str = None, progress_callback=None):
         progress_callback: 进度回调函数，接收 (progress, message) 参数
     
     Returns:
-        向量数据库对象，如果不存在或加载失败则返回 None
+        (向量数据库对象, 错误详情字典)
+        如果成功：返回 (vectorstore, None)
+        如果失败：返回 (None, error_detail) 其中 error_detail 包含详细的错误信息
     """
     try:
         # 优先使用新版本的包
@@ -1050,7 +1052,7 @@ def load_existing_vector_store(folder_path: str = None, progress_callback=None):
         db_path = get_vector_db_path(folder_path) if folder_path else "./chroma_db"
         
         if not os.path.exists(db_path):
-            return None
+            return None, None, None
         
         if progress_callback:
             progress_callback(10, "🔄 正在加载已有向量数据库...")
@@ -1069,67 +1071,130 @@ def load_existing_vector_store(folder_path: str = None, progress_callback=None):
             progress_callback(50, "🔄 正在加载向量数据库...")
         
         # 从持久化目录加载
+        load_error_detail = None
         try:
             vectorstore = Chroma(
                 persist_directory=db_path,
                 embedding_function=embeddings
             )
         except Exception as load_error:
-            # 加载失败，可能是数据库损坏或版本不兼容
+            # 加载失败，记录详细错误信息
+            load_error_detail = {
+                'type': type(load_error).__name__,
+                'message': str(load_error),
+                'stage': '加载向量数据库对象'
+            }
             error_msg = str(load_error).lower()
             print(f"❌ 向量数据库加载失败: {str(load_error)}")
-            if progress_callback:
-                progress_callback(100, "❌ 向量数据库加载失败")
-            return None
-        
-        # 验证向量数据库是否可用（使用更温和的验证方法）
-        # 只对真正的schema错误或维度不匹配错误进行清理，其他错误只记录但不清理
-        try:
-            # 尝试获取数据库中的文档数量
-            doc_count = len(vectorstore)
+            print(f"   错误类型: {type(load_error).__name__}")
+            print(f"   数据库路径: {db_path}")
             
-            # 如果文档数量为0，可能是空数据库，但不算损坏
-            if doc_count == 0:
-                print("⚠️ 向量数据库为空，需要重新创建")
+            # 检查是否是明确的损坏错误
+            is_corrupted = (
+                "no such column" in error_msg or
+                "collections.topic" in error_msg or
+                "database disk image is malformed" in error_msg or
+                "file is encrypted" in error_msg or
+                "corrupt" in error_msg
+            )
+            
+            if is_corrupted:
+                print(f"   ⚠️ 检测到数据库损坏，建议清理后重新创建")
                 if progress_callback:
-                    progress_callback(100, "⚠️ 向量数据库为空")
-                return None
-            
-            # 尝试进行一次简单的查询来验证数据库是否真的可用
-            # 使用一个简单的测试查询，如果失败说明数据库有问题
+                    progress_callback(100, "❌ 向量数据库损坏")
+            else:
+                if progress_callback:
+                    progress_callback(100, "❌ 向量数据库加载失败")
+            return None, load_error_detail
+        
+        # 验证向量数据库是否可用（使用兼容的验证方法）
+        # 注意：新版本的 ChromaDB 可能不支持 len()，改用直接查询的方式验证
+        verify_error_detail = None
+        try:
+            # 直接尝试进行一次简单的查询来验证数据库是否真的可用
+            # 这是最可靠的方法，不依赖 len() 等可能不兼容的方法
             try:
-                # 尝试获取第一个文档（如果存在）
+                # 尝试获取文档（如果存在）
+                # 使用一个简单的测试查询，如果失败说明数据库有问题
                 results = vectorstore.similarity_search("test", k=1)
-                # 如果能正常返回结果（即使为空），说明数据库可用
+                # 如果能正常返回结果（即使为空列表），说明数据库可用
+                # 注意：空结果列表也是有效的，说明数据库可用但可能没有文档
+                
+                # 如果查询成功，数据库可用，直接返回
+                if progress_callback:
+                    progress_callback(100, "✅ 向量数据库加载完成！")
+                print(f"✅ 向量数据库验证成功，已加载 {db_path}")
+                return vectorstore, None
+                
             except Exception as query_error:
-                # 查询失败，检查是否是schema错误
+                # 查询失败，记录详细错误
+                verify_error_detail = {
+                    'type': type(query_error).__name__,
+                    'message': str(query_error),
+                    'stage': '测试查询'
+                }
                 error_msg = str(query_error).lower()
+                print(f"❌ 向量数据库查询失败: {str(query_error)}")
+                print(f"   错误类型: {type(query_error).__name__}")
+                
                 is_schema_error = (
                     "no such column" in error_msg or
                     "collections.topic" in error_msg or
                     "schema" in error_msg or
                     "dimensionality" in error_msg or
-                    "dimension" in error_msg
+                    "dimension" in error_msg or
+                    "has no len" in error_msg  # 兼容性错误
                 )
                 
                 if is_schema_error:
                     # Schema错误或维度不匹配，清理数据库
+                    print(f"   ⚠️ 检测到 schema 错误或维度不匹配，正在清理...")
                     if progress_callback:
                         progress_callback(100, "⚠️ 检测到数据库 schema 错误或维度不匹配，正在清理...")
                     cleanup_corrupted_db(db_path, force=True)
-                    return None
+                    return None, verify_error_detail
                 else:
-                    # 其他查询错误，可能是临时性问题，不清理数据库，但返回None让调用者重新创建
-                    # 记录错误但不清理，因为可能是临时性问题
-                    print(f"❌ 向量数据库查询失败: {str(query_error)}")
+                    # 其他查询错误，记录但不清理（可能是临时性问题）
                     print(f"   提示：如果文档未变化，请检查数据库是否损坏，或点击'重新加载'按钮强制重新创建")
                     if progress_callback:
                         progress_callback(100, "❌ 向量数据库查询失败")
-                    return None
+                    return None, verify_error_detail
                     
         except Exception as verify_error:
-            # len() 调用失败，检查是否是schema错误
+            # 验证过程中发生未预期的错误
+            verify_error_detail = {
+                'type': type(verify_error).__name__,
+                'message': str(verify_error),
+                'stage': '验证数据库'
+            }
             error_msg = str(verify_error).lower()
+            print(f"❌ 向量数据库验证失败: {str(verify_error)}")
+            print(f"   错误类型: {type(verify_error).__name__}")
+            
+            # 检查是否是 len() 相关的兼容性问题
+            if "has no len" in error_msg or ("object of type" in error_msg and "has no len" in error_msg):
+                # 这是兼容性问题，不是真正的损坏，尝试直接使用数据库
+                print(f"   ℹ️ 检测到 len() 兼容性问题，但数据库对象已成功创建，尝试直接使用...")
+                # 直接尝试查询来验证数据库是否真的可用
+                try:
+                    results = vectorstore.similarity_search("test", k=1)
+                    # 查询成功，数据库可用
+                    if progress_callback:
+                        progress_callback(100, "✅ 向量数据库加载完成（跳过 len() 验证）")
+                    print(f"✅ 向量数据库验证成功（通过查询验证），已加载 {db_path}")
+                    return vectorstore, None
+                except Exception as query_error:
+                    # 查询也失败，说明数据库真的有问题
+                    verify_error_detail = {
+                        'type': type(query_error).__name__,
+                        'message': str(query_error),
+                        'stage': '测试查询（len() 失败后）'
+                    }
+                    print(f"   ❌ 查询验证也失败: {str(query_error)}")
+                    if progress_callback:
+                        progress_callback(100, "❌ 向量数据库验证失败")
+                    return None, verify_error_detail
+            
             is_schema_error = (
                 "no such column" in error_msg or
                 "collections.topic" in error_msg or
@@ -1140,25 +1205,31 @@ def load_existing_vector_store(folder_path: str = None, progress_callback=None):
             
             if is_schema_error:
                 # Schema错误或维度不匹配，清理数据库
+                print(f"   ⚠️ 检测到 schema 错误或维度不匹配，正在清理...")
                 if progress_callback:
                     progress_callback(100, "⚠️ 检测到数据库 schema 错误或维度不匹配，正在清理...")
                 cleanup_corrupted_db(db_path, force=True)
             else:
-                # 其他错误（可能是临时性问题），不清理数据库，只返回None
-                # 记录错误但不清理，因为可能是临时性问题
-                print(f"❌ 向量数据库验证失败: {str(verify_error)}")
                 print(f"   提示：如果文档未变化，请检查数据库是否损坏，或点击'重新加载'按钮强制重新创建")
                 if progress_callback:
                     progress_callback(100, "❌ 向量数据库验证失败")
-            return None
+            return None, verify_error_detail
         
         if progress_callback:
             progress_callback(100, "✅ 向量数据库加载完成！")
         
-        return vectorstore
+        return vectorstore, None
     except Exception as e:
-        # 加载失败，返回 None
-        return None
+        # 加载失败，返回详细错误信息
+        error_detail = {
+            'type': type(e).__name__,
+            'message': str(e),
+            'stage': '未知阶段',
+            'traceback': str(e.__traceback__) if hasattr(e, '__traceback__') else None
+        }
+        print(f"❌ 向量数据库加载过程中发生未捕获的异常: {str(e)}")
+        print(f"   错误类型: {type(e).__name__}")
+        return None, error_detail
 
 def calculate_content_hash(content: Any) -> str:
     """计算文档内容的哈希值
@@ -2970,7 +3041,7 @@ def main():
                             status_text.text("🔄 正在检查已有向量数据库...")
                             progress_bar.progress(0.05)
                             
-                            existing_vectorstore = load_existing_vector_store(
+                            existing_vectorstore, error_detail = load_existing_vector_store(
                                 folder_path=folder_path,
                                 progress_callback=lambda p, msg: (
                                     progress_bar.progress(p / 100.0),
@@ -2992,18 +3063,51 @@ def main():
                                     success_placeholder.success("✅ 已加载已有向量数据库（文档未变化）")
                                 else:
                                     # 文档未变化但数据库无法加载（可能损坏）
-                                    # 不自动重新创建，提示用户
+                                    # 不自动重新创建，提示用户并显示详细错误信息
                                     progress_bar.progress(1.0)
                                     status_text.text("⚠️ 文档未变化，但向量数据库无法加载")
-                                    warning_msg = (
-                                        "⚠️ **文档未变化，但向量数据库无法加载**\n\n"
-                                        "可能的原因：\n"
-                                        "- 向量数据库文件损坏\n"
-                                        "- 数据库版本不兼容\n\n"
-                                        "**建议**：\n"
-                                        "- 如果数据库损坏，可以手动删除数据库目录后重新创建\n"
-                                        "- 或者点击'重新加载'按钮强制重新创建"
-                                    )
+                                    
+                                    # 构建详细的错误信息
+                                    db_path = get_vector_db_path(folder_path)
+                                    if error_detail:
+                                        error_type = error_detail.get('type', '未知错误')
+                                        error_message = error_detail.get('message', '无详细信息')
+                                        error_stage = error_detail.get('stage', '未知阶段')
+                                        
+                                        warning_msg = (
+                                            f"⚠️ **文档未变化，但向量数据库无法加载**\n\n"
+                                            f"**错误详情**：\n"
+                                            f"- 错误类型: `{error_type}`\n"
+                                            f"- 错误阶段: `{error_stage}`\n"
+                                            f"- 错误信息: `{error_message[:200]}`\n"
+                                            f"- 数据库路径: `{db_path}`\n\n"
+                                            f"**可能的原因**：\n"
+                                            f"- 向量数据库文件损坏\n"
+                                            f"- 数据库版本不兼容\n"
+                                            f"- 嵌入模型维度不匹配\n"
+                                            f"- ChromaDB 版本更新导致不兼容\n\n"
+                                            f"**当前状态**：\n"
+                                            f"- ✅ 智能问答功能仍可使用（系统会自动使用所有文档内容）\n"
+                                            f"- ⚠️ 但无法使用向量搜索优化，可能影响回答的精确度\n\n"
+                                            f"**解决方案**：\n"
+                                            f"1. **推荐**：点击'重新加载'按钮强制重新创建向量数据库\n"
+                                            f"2. **手动清理**：删除数据库目录 `{db_path}` 后重新加载\n"
+                                            f"3. **查看控制台**：查看控制台输出的详细错误信息以获取更多诊断信息"
+                                        )
+                                    else:
+                                        warning_msg = (
+                                            f"⚠️ **文档未变化，但向量数据库无法加载**\n\n"
+                                            f"**可能的原因**：\n"
+                                            f"- 向量数据库文件损坏\n"
+                                            f"- 数据库版本不兼容\n\n"
+                                            f"**当前状态**：\n"
+                                            f"- ✅ 智能问答功能仍可使用（系统会自动使用所有文档内容）\n"
+                                            f"- ⚠️ 但无法使用向量搜索优化，可能影响回答的精确度\n\n"
+                                            f"**建议**：\n"
+                                            f"- 点击'重新加载'按钮强制重新创建向量数据库\n"
+                                            f"- 或手动删除数据库目录 `{db_path}` 后重新创建"
+                                        )
+                                    
                                     error_placeholder.warning(warning_msg)
                                     st.session_state.vectorstore = None
                             else:
@@ -3206,7 +3310,7 @@ def main():
                     status_text.text("🔄 正在检查已有向量数据库...")
                     progress_bar.progress(0.05)
                     
-                    existing_vectorstore = load_existing_vector_store(
+                    existing_vectorstore, error_detail = load_existing_vector_store(
                         folder_path=None,  # 上传文件时没有文件夹路径
                         progress_callback=lambda p, msg: (
                             progress_bar.progress(p / 100.0),
@@ -3886,18 +3990,40 @@ def main():
                     with st.expander("查看参考来源", expanded=False):
                         source_count = 0
                         
+                        # 显示向量数据库状态提示
+                        if not st.session_state.vectorstore:
+                            st.info("ℹ️ 向量数据库不可用，当前使用所有文档内容进行回答")
+                            st.markdown("---")
+                        
                         # 显示本地文档来源
                         if st.session_state.vectorstore:
                             similar_docs = search_similar_documents(
                                 st.session_state.vectorstore, 
                                 question
                             )
-                            for i, (content, source) in enumerate(similar_docs[:3], 1):
+                            if similar_docs:
+                                for i, (content, source) in enumerate(similar_docs[:3], 1):
+                                    source_count += 1
+                                    st.markdown(f"**来源 {source_count} - 📄 {source}**")
+                                    st.caption(content[:300] + "...")
+                                    if i < len(similar_docs[:3]):
+                                        st.markdown("---")
+                            else:
+                                st.info("ℹ️ 未找到相关文档片段")
+                        else:
+                            # 向量数据库不可用，显示所有文档列表
+                            st.markdown("**📄 使用的文档（向量数据库不可用，使用全部文档）：**")
+                            for i, (name, data) in enumerate(list(st.session_state.docs.items())[:5], 1):
                                 source_count += 1
-                                st.markdown(f"**来源 {source_count} - 📄 {source}**")
-                                st.caption(content[:300] + "...")
-                                if i < len(similar_docs[:3]):
+                                st.markdown(f"**来源 {source_count} - 📄 {name}**")
+                                content_preview = data.get('content', '')
+                                if isinstance(content_preview, dict):
+                                    content_preview = str(content_preview)
+                                st.caption(content_preview[:200] + ("..." if len(content_preview) > 200 else ""))
+                                if i < min(5, len(st.session_state.docs)):
                                     st.markdown("---")
+                            if len(st.session_state.docs) > 5:
+                                st.caption(f"... 还有 {len(st.session_state.docs) - 5} 个文档")
                         
                         # 显示联网搜索结果来源
                         if web_search_refs:
