@@ -1052,7 +1052,7 @@ def load_existing_vector_store(folder_path: str = None, progress_callback=None):
         db_path = get_vector_db_path(folder_path) if folder_path else "./chroma_db"
         
         if not os.path.exists(db_path):
-            return None, None, None
+            return None, None
         
         if progress_callback:
             progress_callback(10, "🔄 正在加载已有向量数据库...")
