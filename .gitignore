@@ -25,6 +25,7 @@ venv/
 env/
 ENV/
 .venv/
+venv_build/              # 打包用的虚拟环境
 
 # Poetry
 poetry.lock
@@ -84,4 +85,10 @@ desktop.ini
 # 临时文件
 *.tmp
 *.temp
+
+# PyInstaller打包相关文件
+# build/ 和 dist/ 已在上面定义
+*.spec                    # PyInstaller spec文件（如果生成在根目录，build_script目录中的应该提交）
+*.manifest                # Windows清单文件
+*.pyd                     # Python扩展模块（打包时生成）
 

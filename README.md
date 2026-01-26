@@ -15,6 +15,16 @@
 
 ## 🚀 快速开始
 
+### 📦 Windows用户 - 一键安装版本（推荐）
+
+如果您是Windows用户且不想手动安装Python环境，可以使用打包版本：
+
+1. **下载打包版本**（如果有提供）
+2. **解压文件**
+3. **双击"启动应用.bat"**即可使用
+
+详细说明请查看：[Windows打包版本使用说明](使用说明-打包版.txt)
+
 ### 1. 安装依赖
 
 **⭐ 推荐方式（使用 Poetry - Python 3.11 环境）：**
@@ -173,6 +183,35 @@ chmod +x scripts/run.sh
   - pypdf (PDF文档)
   - pandas/openpyxl (Excel文档)
 
+## 📦 Windows应用程序打包
+
+如果您想将本项目打包成Windows可执行程序，请参考：
+
+- **打包指南**：[docs/WINDOWS_PACKAGING.md](docs/WINDOWS_PACKAGING.md)
+- **打包脚本目录**：`build_script/`（包含所有打包相关文件）
+  - `build_windows.bat` - PyInstaller打包脚本（推荐）
+  - `build_simple.bat` - 简化打包脚本（安装包方案）
+  - `build_windows.spec` - PyInstaller配置文件
+  - `install.bat` - 一键安装脚本
+  - `launcher.py` - 启动器脚本
+  - `打包说明.txt` - 打包说明文档
+  - `使用说明-打包版.txt` - 打包版本使用说明
+
+### 快速打包
+
+```bash
+# 进入打包脚本目录
+cd build_script
+
+# 运行打包脚本（PyInstaller方案）
+build_windows.bat
+
+# 或运行简化打包脚本（安装包方案）
+build_simple.bat
+
+# 打包完成后，文件位于 dist\智能知识库系统\
+```
+
 ## 📁 项目结构
 
 ```
@@ -188,6 +227,14 @@ knowledge-base/
 ├── README.md                   # 项目说明
 ├── .streamlit/                 # Streamlit 配置目录
 │   └── config.toml             # Streamlit 配置文件
+├── build_script/               # Windows打包脚本目录
+│   ├── build_windows.bat       # PyInstaller打包脚本（推荐）
+│   ├── build_simple.bat        # 简化打包脚本（安装包方案）
+│   ├── build_windows.spec      # PyInstaller配置文件
+│   ├── install.bat             # 一键安装脚本
+│   ├── launcher.py             # 启动器脚本（用于打包）
+│   ├── 打包说明.txt            # 打包说明文档
+│   └── 使用说明-打包版.txt     # 打包版本使用说明
 ├── docs/                       # 文档目录
 │   ├── INSTALL.md             # 安装指南
 │   ├── MODEL_DOWNLOAD_GUIDE.md # 模型下载指南
@@ -195,6 +242,7 @@ knowledge-base/
 │   ├── API_TIMEOUT_FIX.md     # API超时问题解决
 │   ├── POETRY_SETUP.md        # Poetry 使用说明
 │   ├── PACKAGING.md           # 打包说明
+│   ├── WINDOWS_PACKAGING.md   # Windows打包详细指南
 │   ├── SAVE_FEATURES.md       # 保存功能说明
 │   ├── VECTOR_DB_CLEANUP.md   # 向量数据库清理说明
 │   ├── FLOWCHART_CONVERTER.md # 流程图转换工具说明
